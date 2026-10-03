@@ -367,10 +367,28 @@ CHudChat::CHudChat()
 
 DEFINE_HUD_ELEM(CHudChat);
 
+/*void CHudChat::CreateChatInputLine(void)
+{
+	m_pChatInput = new CHudChatInputLine(this, "ChatInputLine");
+	m_pChatInput->SetVisible(false);
+
+	if (GetChatHistory())
+	{
+		GetChatHistory()->SetMaximumCharCount(127 * 100);
+		GetChatHistory()->SetVisible(true);
+	}
+}*/
 void CHudChat::CreateChatInputLine(void)
 {
 	m_pChatInput = new CHudChatInputLine(this, "ChatInputLine");
 	m_pChatInput->SetVisible(false);
+
+	m_pPreview = new vgui2::Label(this, "ChatPreview", L"");
+	m_pPreview->SetVisible(false);
+	m_pPreview->SetMouseInputEnabled(false);
+	m_pPreview->SetPaintBackgroundEnabled(true);
+	m_pPreview->SetContentAlignment(vgui2::Label::a_west);
+	m_pPreview->SetTextInset(2, 0);
 
 	if (GetChatHistory())
 	{
@@ -542,7 +560,7 @@ int CHudChat::GetChatInputOffset(void)
 // Purpose: Do respositioning here to avoid latency due to repositioning of vgui
 //  voice manager icon panel
 //-----------------------------------------------------------------------------
-void CHudChat::OnTick(void)
+/*void CHudChat::OnTick(void)
 {
 	m_nVisibleHeight = 0;
 
@@ -569,6 +587,73 @@ void CHudChat::OnTick(void)
 		GetChatHistory()->GetBounds(iChatHistoryX, iChatHistoryY, iChatHistoryW, iChatHistoryH);
 
 		iChatHistoryH = (iChatH - (m_iFontHeight * 2.25)) - iChatHistoryY;
+
+		GetChatHistory()->SetBounds(iChatHistoryX, iChatHistoryY, iChatHistoryW, iChatHistoryH);
+	}
+
+	FadeChatHistory();
+}*/
+void CHudChat::OnTick(void)
+{
+	m_nVisibleHeight = 0;
+
+	CHudChatLine *line = m_ChatLine;
+
+	// Arabic typing preview: shows the typed text the way other players will see it
+	static bool s_previewStyled = false;
+	bool showPreview = false;
+	if (m_pPreview && m_pChatInput->IsVisible() && hud_chat_arabic.GetBool())
+	{
+		wchar_t typed[MAX_CHAT_INPUT_STRING_LEN + 1];
+		m_pChatInput->GetMessageText(typed, sizeof(typed));
+		std::wstring logical(typed);
+		if (ArabicText::ContainsArabicWide(logical))
+		{
+			if (!s_previewStyled)
+			{
+				vgui2::IScheme *pChatScheme = vgui2::scheme()->GetIScheme(vgui2::scheme()->GetScheme("ChatScheme"));
+				if (pChatScheme)
+					m_pPreview->SetFont(pChatScheme->GetFont("ChatFont"));
+				m_pPreview->SetFgColor(Color(160, 220, 255, 255));
+				m_pPreview->SetBgColor(Color(0, 0, 0, 110));
+				s_previewStyled = true;
+			}
+			std::wstring visual = ArabicText::ToVisualWide(logical);
+			m_pPreview->SetText(visual.c_str());
+			showPreview = true;
+		}
+	}
+	if (!showPreview)
+		s_previewStyled = false;
+	if (m_pPreview)
+		m_pPreview->SetVisible(showPreview);
+
+	if (line)
+	{
+		vgui2::HFont font = line->GetFont();
+		m_iFontHeight = vgui2::surface()->GetFontTall(font) + 2;
+
+		// Put input area at bottom
+
+		int iChatX, iChatY, iChatW, iChatH;
+		int iInputX, iInputY, iInputW, iInputH;
+
+		m_pChatInput->GetBounds(iInputX, iInputY, iInputW, iInputH);
+		GetBounds(iChatX, iChatY, iChatW, iChatH);
+
+		m_pChatInput->SetBounds(iInputX, iChatH - (m_iFontHeight * 1.75), iInputW, m_iFontHeight);
+
+		// The preview line sits right above the input line
+		int iExtra = showPreview ? m_iFontHeight : 0;
+		if (showPreview)
+			m_pPreview->SetBounds(iInputX, iChatH - (m_iFontHeight * 1.75) - m_iFontHeight, iInputW, m_iFontHeight);
+
+		//Resize the History Panel so it fits more lines depending on the screen resolution.
+		int iChatHistoryX, iChatHistoryY, iChatHistoryW, iChatHistoryH;
+
+		GetChatHistory()->GetBounds(iChatHistoryX, iChatHistoryY, iChatHistoryW, iChatHistoryH);
+
+		iChatHistoryH = (iChatH - (m_iFontHeight * 2.25) - iExtra) - iChatHistoryY;
 
 		GetChatHistory()->SetBounds(iChatHistoryX, iChatHistoryY, iChatHistoryW, iChatHistoryH);
 	}
