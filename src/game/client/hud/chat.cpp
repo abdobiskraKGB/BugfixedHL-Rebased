@@ -25,11 +25,14 @@
 #include "results.h"
 #include "hud/ag/ag_location.h"
 #include "gameui/gameui_viewport.h"
+#include "arabic_text.h"
 
 ConVar hud_saytext("hud_saytext", "1", FCVAR_BHL_ARCHIVE, "Enable/disable display of new chat messages");
 ConVar hud_saytext_time("hud_saytext_time", "12", FCVAR_BHL_ARCHIVE, "How long for new messages should stay on the screen");
 ConVar hud_saytext_sound("hud_saytext_sound", "1", FCVAR_BHL_ARCHIVE, "Play sound on new chat message");
 ConVar cl_mute_all_comms("cl_mute_all_comms", "1", FCVAR_BHL_ARCHIVE, "If 1, then all communications from a player will be blocked when that player is muted, including chat messages.");
+ConVar hud_chat_arabic("hud_chat_arabic", "1", FCVAR_BHL_ARCHIVE, "Shape and reorder Arabic text in chat");
+ConVar hud_chat_arabic_margin("hud_chat_arabic_margin", "40", FCVAR_BHL_ARCHIVE, "Pixels kept free at the right when wrapping Arabic lines");
 
 constexpr const char CHAT_SOUND_FILE[] = "misc/talk.wav";
 constexpr const char CHAT_SOUND_FALLBACK[] = "misc/talk_bhl_fallback.wav";
@@ -1012,6 +1015,29 @@ void CHudChatLine::Colorize(int alpha)
 		pChat->GetChatHistory()->InsertString("\n");
 	}
 
+	// Arabic support: font and width used to wrap Arabic lines ourselves
+	vgui2::HFont arabicFont = 0;
+	int arabicMaxWidth = 0;
+	if (pChat && pChat->GetChatHistory() && hud_chat_arabic.GetBool())
+	{
+		vgui2::IScheme *pChatScheme = vgui2::scheme()->GetIScheme(vgui2::scheme()->GetScheme("ChatScheme"));
+		if (pChatScheme)
+			arabicFont = pChatScheme->GetFont("ChatFont");
+		arabicMaxWidth = pChat->GetChatHistory()->GetWide() - hud_chat_arabic_margin.GetInt();
+	}
+	int arabicUsedWidth = 0;
+	auto measureText = [arabicFont](const std::wstring &str) -> int
+	{
+		int total = 0;
+		for (wchar_t ch : str)
+		{
+			int a, b, c;
+			vgui2::surface()->GetCharABCwide(arabicFont, ch, a, b, c);
+			total += a + b + c;
+		}
+		return total;
+	};
+
 	wchar_t wText[4096];
 	Color color;
 	for (int i = 0; i < m_textRanges.Count(); ++i)
@@ -1028,15 +1054,23 @@ void CHudChatLine::Colorize(int alpha)
 				color[3] = alpha;
 			}
 
+			const wchar_t *pInsert = wText;
+			std::wstring layoutText;
+			if (arabicFont && arabicMaxWidth > 0)
+			{
+				layoutText = ArabicText::LayoutSegment(std::wstring(wText), arabicMaxWidth, arabicUsedWidth, measureText);
+				pInsert = layoutText.c_str();
+			}
+
 			InsertColorChange(color);
-			InsertString(wText);
+			InsertString(pInsert);
 
 			CHudChat *pChat = dynamic_cast<CHudChat *>(GetParent());
 
 			if (pChat && pChat->GetChatHistory())
 			{
 				pChat->GetChatHistory()->InsertColorChange(color);
-				pChat->GetChatHistory()->InsertString(wText);
+				pChat->GetChatHistory()->InsertString(pInsert);
 
 				if (hud_saytext.GetBool())
 					pChat->GetChatHistory()->InsertFade(hud_saytext_time.GetFloat(), CHAT_HISTORY_IDLE_FADE_TIME);
