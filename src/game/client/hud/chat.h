@@ -249,7 +249,7 @@ protected:
 	int m_iFontHeight;
 
 	CHudChatHistory *m_pChatHistory = nullptr;
-
+	vgui2::Label *m_pPreview = nullptr;
 	Color m_ColorCustom;
 
 	int MsgFunc_SayText(const char *pszName, int iSize, void *pbuf);
