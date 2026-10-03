@@ -25,6 +25,7 @@
 #include "results.h"
 #include "hud/ag/ag_location.h"
 #include "gameui/gameui_viewport.h"
+#include "chat_lang_flag.h"
 #include "arabic_text.h"
 
 ConVar hud_saytext("hud_saytext", "1", FCVAR_BHL_ARCHIVE, "Enable/disable display of new chat messages");
@@ -390,6 +391,9 @@ void CHudChat::CreateChatInputLine(void)
 	m_pPreview->SetContentAlignment(vgui2::Label::a_west);
 	m_pPreview->SetTextInset(2, 0);
 
+	m_pLangFlag = new CChatLangFlag(this, "ChatLangFlag");
+	m_pLangFlag->SetZPos(100);
+
 	if (GetChatHistory())
 	{
 		GetChatHistory()->SetMaximumCharCount(127 * 100);
@@ -628,6 +632,15 @@ void CHudChat::OnTick(void)
 	if (m_pPreview)
 		m_pPreview->SetVisible(showPreview);
 
+	// Flag of the current keyboard language
+	if (m_pLangFlag)
+	{
+		CChatLangFlag *pFlag = static_cast<CChatLangFlag *>(m_pLangFlag);
+		ChatLang::Lang lang = m_pChatInput->IsVisible() ? ChatLang::DetectKeyboardLanguage() : ChatLang::Lang::None;
+		pFlag->SetLang(lang);
+		pFlag->SetVisible(lang != ChatLang::Lang::None);
+	}
+
 	if (line)
 	{
 		vgui2::HFont font = line->GetFont();
@@ -642,6 +655,14 @@ void CHudChat::OnTick(void)
 		GetBounds(iChatX, iChatY, iChatW, iChatH);
 
 		m_pChatInput->SetBounds(iInputX, iChatH - (m_iFontHeight * 1.75), iInputW, m_iFontHeight);
+
+		// The flag sits at the right end of the input line
+		if (m_pLangFlag && m_pLangFlag->IsVisible())
+		{
+			int fw, fh;
+			m_pLangFlag->GetSize(fw, fh);
+			m_pLangFlag->SetPos(iInputX + iInputW - fw - 6, (int)(iChatH - (m_iFontHeight * 1.75)) + (m_iFontHeight - fh) / 2);
+		}
 
 		// The preview line sits right above the input line
 		int iExtra = showPreview ? m_iFontHeight : 0;
