@@ -1383,10 +1383,22 @@ void CHudChat::ChatPrintf(int iPlayerIndex, const char *fmt, ...)
 	current = localtime(&now);
 	sprintf(time_buf, "[%02i:%02i:%02i] ", current->tm_hour, current->tm_min, current->tm_sec);
 
-	if (gHUD.GetColorCodeAction() == ColorCodeAction::Handle || gHUD.GetColorCodeAction() == ColorCodeAction::Strip)
+	/**if (gHUD.GetColorCodeAction() == ColorCodeAction::Handle || gHUD.GetColorCodeAction() == ColorCodeAction::Strip)
 		ConPrintf(m_ConsoleMsgColor, "%s %s\n", time_buf, RemoveColorCodes(pmsg));
 	else
-		ConPrintf(m_ConsoleMsgColor, "%s %s\n", time_buf, pmsg);
+		ConPrintf(m_ConsoleMsgColor, "%s %s\n", time_buf, pmsg);**/
+	{
+		std::string conText;
+		if (gHUD.GetColorCodeAction() == ColorCodeAction::Handle || gHUD.GetColorCodeAction() == ColorCodeAction::Strip)
+			conText = RemoveColorCodes(pmsg);
+		else
+			conText = pmsg;
+
+		if (hud_chat_arabic.GetBool())
+			conText = ArabicText::ToVisualUtf8(conText);
+
+		ConPrintf(m_ConsoleMsgColor, "%s %s\n", time_buf, conText.c_str());
+	}
 
 	bool isPlayerChat = (pmsg[0] == COLOR_PLAYERNAME);
 	CResults::Get().AddLog(time_buf, isPlayerChat);
