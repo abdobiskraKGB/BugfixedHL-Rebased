@@ -4,7 +4,6 @@
 // The flags are drawn from a tiny pixel map, so no image files are needed.
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
 #include <cstdint>
 #include <cwchar>
@@ -15,18 +14,6 @@
 // the keyboard layout is read straight from Windows.
 #if defined(_WIN32) && defined(_WINDOWS_)
 #define CHATLANG_HAS_WINAPI 1
-#endif
-
-#ifdef _WIN32
-#ifndef _WINDOWS_
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 #endif
 
 namespace ChatLang
@@ -144,16 +131,6 @@ bool QueryShortCode(T *, wchar_t *buf, int, long)
 {
 	buf[0] = 0;
 	return false;
-}
-
-// Windows keyboard layout of the game window thread (0 when unknown / not Windows)
-inline unsigned RawLangId()
-{
-#ifdef _WIN32
-	return (unsigned)(reinterpret_cast<uintptr_t>(GetKeyboardLayout(0)) & 0xFFFF);
-#else
-	return 0;
-#endif
 }
 
 // Primary language id of the active keyboard layout, -1 when not available (needs windows.h).
