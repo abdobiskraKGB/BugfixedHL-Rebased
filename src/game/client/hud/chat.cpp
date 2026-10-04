@@ -1565,7 +1565,12 @@ void CHudChat::ChatPrintf(int iPlayerIndex, const char *fmt, ...)
 			conText = pmsg;
 
 		if (hud_chat_arabic.GetBool())
-			conText = ArabicText::ToVisualUtf8(conText);
+		{
+			std::string nameStr = playerName;
+			if (conText.find(nameStr) == std::string::npos)
+				nameStr = RemoveColorCodes(playerName);
+			conText = ArabicText::ToVisualChatLineUtf8(conText, nameStr);
+		}
 
 		ConPrintf(m_ConsoleMsgColor, "%s %s\n", time_buf, conText.c_str());
 	}
