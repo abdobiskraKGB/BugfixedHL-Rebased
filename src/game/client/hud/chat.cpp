@@ -34,6 +34,7 @@ ConVar hud_saytext_sound("hud_saytext_sound", "1", FCVAR_BHL_ARCHIVE, "Play soun
 ConVar cl_mute_all_comms("cl_mute_all_comms", "1", FCVAR_BHL_ARCHIVE, "If 1, then all communications from a player will be blocked when that player is muted, including chat messages.");
 ConVar hud_chat_arabic("hud_chat_arabic", "1", FCVAR_BHL_ARCHIVE, "Shape and reorder Arabic text in chat");
 ConVar hud_chat_arabic_margin("hud_chat_arabic_margin", "40", FCVAR_BHL_ARCHIVE, "Pixels kept free at the right when wrapping Arabic lines");
+ConVar hud_chat_lang_debug("hud_chat_lang_debug", "0", FCVAR_BHL_ARCHIVE, "Print the detected keyboard language to the console");
 
 constexpr const char CHAT_SOUND_FILE[] = "misc/talk.wav";
 constexpr const char CHAT_SOUND_FALLBACK[] = "misc/talk_bhl_fallback.wav";
@@ -384,12 +385,13 @@ void CHudChat::CreateChatInputLine(void)
 	m_pChatInput = new CHudChatInputLine(this, "ChatInputLine");
 	m_pChatInput->SetVisible(false);
 
+	// Draws the shaped Arabic text over the input box while typing Arabic
 	m_pPreview = new vgui2::Label(this, "ChatPreview", L"");
 	m_pPreview->SetVisible(false);
 	m_pPreview->SetMouseInputEnabled(false);
 	m_pPreview->SetPaintBackgroundEnabled(true);
-	m_pPreview->SetContentAlignment(vgui2::Label::a_west);
 	m_pPreview->SetTextInset(2, 0);
+	m_pPreview->SetZPos(50);
 
 	m_pLangFlag = new CChatLangFlag(this, "ChatLangFlag");
 	m_pLangFlag->SetZPos(100);
@@ -603,44 +605,6 @@ void CHudChat::OnTick(void)
 
 	CHudChatLine *line = m_ChatLine;
 
-	// Arabic typing preview: shows the typed text the way other players will see it
-	static bool s_previewStyled = false;
-	bool showPreview = false;
-	if (m_pPreview && m_pChatInput->IsVisible() && hud_chat_arabic.GetBool())
-	{
-		wchar_t typed[MAX_CHAT_INPUT_STRING_LEN + 1];
-		m_pChatInput->GetMessageText(typed, sizeof(typed));
-		std::wstring logical(typed);
-		if (ArabicText::ContainsArabicWide(logical))
-		{
-			if (!s_previewStyled)
-			{
-				vgui2::IScheme *pChatScheme = vgui2::scheme()->GetIScheme(vgui2::scheme()->GetScheme("ChatScheme"));
-				if (pChatScheme)
-					m_pPreview->SetFont(pChatScheme->GetFont("ChatFont"));
-				m_pPreview->SetFgColor(Color(160, 220, 255, 255));
-				m_pPreview->SetBgColor(Color(0, 0, 0, 110));
-				s_previewStyled = true;
-			}
-			std::wstring visual = ArabicText::ToVisualWide(logical);
-			m_pPreview->SetText(visual.c_str());
-			showPreview = true;
-		}
-	}
-	if (!showPreview)
-		s_previewStyled = false;
-	if (m_pPreview)
-		m_pPreview->SetVisible(showPreview);
-
-	// Flag of the current keyboard language
-	if (m_pLangFlag)
-	{
-		CChatLangFlag *pFlag = static_cast<CChatLangFlag *>(m_pLangFlag);
-		ChatLang::Lang lang = m_pChatInput->IsVisible() ? ChatLang::DetectKeyboardLanguage() : ChatLang::Lang::None;
-		pFlag->SetLang(lang);
-		pFlag->SetVisible(lang != ChatLang::Lang::None);
-	}
-
 	if (line)
 	{
 		vgui2::HFont font = line->GetFont();
@@ -656,28 +620,128 @@ void CHudChat::OnTick(void)
 
 		m_pChatInput->SetBounds(iInputX, iChatH - (m_iFontHeight * 1.75), iInputW, m_iFontHeight);
 
-		// The flag sits at the right end of the input line
-		if (m_pLangFlag && m_pLangFlag->IsVisible())
-		{
-			int fw, fh;
-			m_pLangFlag->GetSize(fw, fh);
-			m_pLangFlag->SetPos(iInputX + iInputW - fw - 6, (int)(iChatH - (m_iFontHeight * 1.75)) + (m_iFontHeight - fh) / 2);
-		}
-
-		// The preview line sits right above the input line
-		int iExtra = showPreview ? m_iFontHeight : 0;
-		if (showPreview)
-			m_pPreview->SetBounds(iInputX, iChatH - (m_iFontHeight * 1.75) - m_iFontHeight, iInputW, m_iFontHeight);
-
 		//Resize the History Panel so it fits more lines depending on the screen resolution.
 		int iChatHistoryX, iChatHistoryY, iChatHistoryW, iChatHistoryH;
 
 		GetChatHistory()->GetBounds(iChatHistoryX, iChatHistoryY, iChatHistoryW, iChatHistoryH);
 
-		iChatHistoryH = (iChatH - (m_iFontHeight * 2.25) - iExtra) - iChatHistoryY;
+		iChatHistoryH = (iChatH - (m_iFontHeight * 2.25)) - iChatHistoryY;
 
 		GetChatHistory()->SetBounds(iChatHistoryX, iChatHistoryY, iChatHistoryW, iChatHistoryH);
 	}
+
+	// Keyboard language flag + shaped Arabic text drawn over the input box
+	bool showOverlay = false;
+	if (m_pChatInput->IsVisible())
+	{
+		int ix, iy, iw, ih; // input line, relative to this panel
+		m_pChatInput->GetBounds(ix, iy, iw, ih);
+		int ex, ey, ew, eh; // text entry, relative to the input line
+		m_pChatInput->GetInputPanel()->GetBounds(ex, ey, ew, eh);
+
+		bool showFlag = false;
+		if (m_pLangFlag)
+		{
+			CChatLangFlag *pFlag = static_cast<CChatLangFlag *>(m_pLangFlag);
+			ChatLang::Lang lang = ChatLang::DetectKeyboardLanguage();
+			pFlag->SetLang(lang);
+			showFlag = (lang != ChatLang::Lang::None);
+			if (showFlag)
+			{
+				int fw, fh;
+				pFlag->GetSize(fw, fh);
+				pFlag->SetPos(ix + ex + ew - fw - 4, iy + ey + (eh - fh) / 2);
+			}
+			pFlag->SetVisible(showFlag);
+		}
+
+		if (hud_chat_lang_debug.GetBool())
+		{
+			static wchar_t s_lastCode[16] = L"?";
+			wchar_t code[16] = { 0 };
+			bool api = ChatLang::QueryShortCode(vgui2::input(), code, sizeof(code), 0);
+			if (wcscmp(code, s_lastCode) != 0)
+			{
+				ConPrintf(ConColor::Red, "[lang] api=%d code='%ls'\n", api ? 1 : 0, code);
+				wcsncpy(s_lastCode, code, 15);
+				s_lastCode[15] = 0;
+			}
+		}
+
+		if (m_pPreview && hud_chat_arabic.GetBool())
+		{
+			wchar_t typed[MAX_CHAT_INPUT_STRING_LEN + 1];
+			m_pChatInput->GetMessageText(typed, sizeof(typed));
+			std::wstring body(typed);
+
+			if (ArabicText::ContainsArabicWide(body))
+			{
+				// paragraph direction = first strong letter
+				bool rtl = false;
+				for (wchar_t c : body)
+				{
+					auto k = ArabicText::detail::Classify((char32_t)c);
+					if (k == ArabicText::detail::C_L)
+						break;
+					if (k == ArabicText::detail::C_R)
+					{
+						rtl = true;
+						break;
+					}
+				}
+				const ArabicText::Dir dir = rtl ? ArabicText::DIR_RTL : ArabicText::DIR_LTR;
+
+				vgui2::HFont ovFont = 0;
+				vgui2::IScheme *pChatScheme = vgui2::scheme()->GetIScheme(vgui2::scheme()->GetScheme("ChatScheme"));
+				if (pChatScheme)
+					ovFont = pChatScheme->GetFont("ChatFont");
+
+				auto measure = [ovFont](const std::wstring &str) -> int
+				{
+					int total = 0;
+					for (wchar_t ch : str)
+					{
+						int a, b, c;
+						vgui2::surface()->GetCharABCwide(ovFont, ch, a, b, c);
+						total += a + b + c;
+					}
+					return total;
+				};
+
+				const int flagReserve = showFlag ? (ChatLang::FLAG_W + 2 + 10) : 0;
+				const int ovW = ew - flagReserve;
+				const bool caretOn = (((int)(gEngfuncs.GetAbsoluteTime() * 2.0)) % 2) == 0;
+				const std::wstring caret = caretOn ? L"|" : L" ";
+
+				std::wstring visual = ArabicText::ToVisualWide(body, dir);
+				std::wstring shown = rtl ? (caret + visual) : (visual + caret);
+
+				// keep the newest characters visible when the text is longer than the box
+				while (body.size() > 1 && measure(shown) > ovW - 6)
+				{
+					body.erase(0, 1);
+					visual = ArabicText::ToVisualWide(body, dir);
+					shown = rtl ? (caret + visual) : (visual + caret);
+				}
+
+				m_pPreview->SetFont(ovFont);
+				m_pPreview->SetFgColor(Color(255, 255, 255, 255));
+				m_pPreview->SetBgColor(Color(12, 12, 12, 255));
+				m_pPreview->SetContentAlignment(rtl ? vgui2::Label::a_east : vgui2::Label::a_west);
+				m_pPreview->SetBounds(ix + ex, iy + ey, ovW, eh);
+				m_pPreview->SetText(shown.c_str());
+				m_pPreview->SetVisible(true);
+				showOverlay = true;
+			}
+		}
+	}
+	else if (m_pLangFlag)
+	{
+		m_pLangFlag->SetVisible(false);
+	}
+
+	if (m_pPreview && !showOverlay)
+		m_pPreview->SetVisible(false);
 
 	FadeChatHistory();
 }
