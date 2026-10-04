@@ -662,7 +662,8 @@ void CHudChat::OnTick(void)
 			bool api = ChatLang::QueryShortCode(vgui2::input(), code, sizeof(code), 0);
 			if (wcscmp(code, s_lastCode) != 0)
 			{
-				ConPrintf(ConColor::Red, "[lang] api=%d code='%ls'\n", api ? 1 : 0, code);
+				//ConPrintf(ConColor::Red, "[lang] api=%d code='%ls'\n", api ? 1 : 0, code);
+				ConPrintf(ConColor::Red, "[lang] win=%d api=%d code='%ls'\n", ChatLang::WindowsLangId(), api ? 1 : 0, code);
 				wcsncpy(s_lastCode, code, 15);
 				s_lastCode[15] = 0;
 			}
