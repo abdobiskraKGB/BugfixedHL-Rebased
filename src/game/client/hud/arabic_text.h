@@ -362,6 +362,31 @@ inline std::wstring ToVisualWide(const std::wstring &logical, Dir dir = DIR_AUTO
 	return std::wstring(v.begin(), v.end());
 }
 
+// A chat line looks like "<color>Name: message". The name and the message are separate paragraphs:
+// the direction of the message must not depend on the (Latin) name in front of it.
+inline std::string ToVisualChatLineUtf8(const std::string &line, const std::string &name)
+{
+	size_t np = name.empty() ? std::string::npos : line.find(name);
+	size_t after = std::string::npos;
+	if (np != std::string::npos)
+	{
+		size_t colon = line.find(':', np + name.size());
+		if (colon != std::string::npos) after = colon + 1;
+	}
+	if (np == std::string::npos || after == std::string::npos)
+		return ToVisualUtf8(line); // no "Name:" found: the whole line is one paragraph
+
+	const std::string pre = line.substr(0, np);
+	const std::string nm = line.substr(np, name.size());
+	const std::string mid = line.substr(np + name.size(), after - (np + name.size())); // up to and including ':'
+	std::string body = line.substr(after);
+
+	size_t sp = 0;
+	while (sp < body.size() && body[sp] == ' ') ++sp;
+
+	return pre + ToVisualUtf8(nm) + mid + body.substr(0, sp) + ToVisualUtf8(body.substr(sp));
+}
+
 inline bool ContainsArabicWide(const std::wstring &s)
 {
 	std::u32string cps(s.begin(), s.end());

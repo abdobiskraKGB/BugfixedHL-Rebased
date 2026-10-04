@@ -5,9 +5,17 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
+#include <cstdint>
 #include <cwchar>
 #include <type_traits>
 #include <utility>
+
+// If windows.h is already included (it normally is, through the precompiled header)
+// the keyboard layout is read straight from Windows.
+#if defined(_WIN32) && defined(_WINDOWS_)
+#define CHATLANG_HAS_WINAPI 1
+#endif
 
 #ifdef _WIN32
 #ifndef _WINDOWS_
@@ -148,22 +156,32 @@ inline unsigned RawLangId()
 #endif
 }
 
+// Primary language id of the active keyboard layout, -1 when not available (needs windows.h).
+inline int WindowsLangId()
+{
+#ifdef CHATLANG_HAS_WINAPI
+	return (int)(((uintptr_t)GetKeyboardLayout(0)) & 0x3FF);
+#else
+	return -1;
+#endif
+}
+
 inline Lang DetectKeyboardLanguage()
 {
-#ifdef _WIN32
-	// primary language id: 0x01 Arabic, 0x09 English, 0x0C French
-	switch (RawLangId() & 0x3FF)
+	// 1) Windows keyboard layout: 0x01 Arabic, 0x09 English, 0x0C French
+	const int win = WindowsLangId();
+	if (win >= 0)
 	{
-	case 0x01: return Lang::Arabic;
-	case 0x09: return Lang::English;
-	case 0x0C: return Lang::French;
-	default: return Lang::None;
+		if (win == 0x01) return Lang::Arabic;
+		if (win == 0x09) return Lang::English;
+		if (win == 0x0C) return Lang::French;
+		return Lang::None;
 	}
-#else
+
+	// 2) vgui2 input method API
 	wchar_t buf[16] = { 0 };
 	QueryShortCode(vgui2::input(), buf, sizeof(buf), 0);
 	return ParseShortCode(buf);
-#endif
 }
 
 } // namespace ChatLang
