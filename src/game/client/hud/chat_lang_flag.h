@@ -4,9 +4,22 @@
 // The flags are drawn from a tiny pixel map, so no image files are needed.
 #pragma once
 
+#include <cstdint>
 #include <cwchar>
 #include <type_traits>
 #include <utility>
+
+#ifdef _WIN32
+#ifndef _WINDOWS_
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+#endif
 
 namespace ChatLang
 {
@@ -125,11 +138,32 @@ bool QueryShortCode(T *, wchar_t *buf, int, long)
 	return false;
 }
 
+// Windows keyboard layout of the game window thread (0 when unknown / not Windows)
+inline unsigned RawLangId()
+{
+#ifdef _WIN32
+	return (unsigned)(reinterpret_cast<uintptr_t>(GetKeyboardLayout(0)) & 0xFFFF);
+#else
+	return 0;
+#endif
+}
+
 inline Lang DetectKeyboardLanguage()
 {
+#ifdef _WIN32
+	// primary language id: 0x01 Arabic, 0x09 English, 0x0C French
+	switch (RawLangId() & 0x3FF)
+	{
+	case 0x01: return Lang::Arabic;
+	case 0x09: return Lang::English;
+	case 0x0C: return Lang::French;
+	default: return Lang::None;
+	}
+#else
 	wchar_t buf[16] = { 0 };
 	QueryShortCode(vgui2::input(), buf, sizeof(buf), 0);
 	return ParseShortCode(buf);
+#endif
 }
 
 } // namespace ChatLang
