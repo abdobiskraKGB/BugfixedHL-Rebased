@@ -453,6 +453,27 @@ inline std::vector<std::string> SplitForSendUtf8(const std::string &logical, siz
 	return out;
 }
 
+// Player names: one short paragraph, at most maxBytes (31 for a Half-Life name) UTF-8 bytes AFTER shaping
+// (3 bytes per Arabic letter). Too long names lose letters at the end. Text without Arabic, or text that
+// is already shaped, is returned unchanged.
+inline std::string ToVisualNameUtf8(const std::string &logical, size_t maxBytes = 31)
+{
+	std::u32string cps;
+	if (!detail::DecodeUtf8(logical, cps) || !ContainsArabic(cps) || HasPresentationForms(cps))
+		return logical;
+
+	const Dir dir = detail::IsRtlParagraph(cps) ? DIR_RTL : DIR_LTR;
+	for (;;)
+	{
+		std::u32string v = ToVisual(cps, dir);
+		std::string s;
+		for (char32_t c : v) detail::AppendUtf8(s, c);
+		if (s.size() <= maxBytes || cps.size() <= 1)
+			return s;
+		cps.pop_back();
+	}
+}
+
 inline bool ContainsArabicWide(const std::wstring &s)
 {
 	std::u32string cps(s.begin(), s.end());
