@@ -387,6 +387,72 @@ inline std::string ToVisualChatLineUtf8(const std::string &line, const std::stri
 	return pre + ToVisualUtf8(nm) + mid + body.substr(0, sp) + ToVisualUtf8(body.substr(sp));
 }
 
+// Prepares text typed by the player for sending: every line is shaped and reordered, so that any
+// client (new or old, with or without a server plugin) shows it correctly. The text is cut into
+// lines of at most maxBytes (UTF-8 bytes of the *shaped* text, 3 bytes per Arabic letter), at word
+// boundaries. The lines are in reading order (first line = beginning of the message).
+// Returns an empty vector when the text has no Arabic (or was already shaped): send it normally.
+inline std::vector<std::string> SplitForSendUtf8(const std::string &logical, size_t maxBytes)
+{
+	std::vector<std::string> out;
+	std::u32string cps;
+	if (!detail::DecodeUtf8(logical, cps) || !ContainsArabic(cps) || HasPresentationForms(cps))
+		return out;
+
+	const Dir dir = detail::IsRtlParagraph(cps) ? DIR_RTL : DIR_LTR;
+
+	auto visualBytes = [&](const std::u32string &line) -> size_t {
+		std::u32string v = ToVisual(line, dir);
+		size_t b = 0;
+		for (char32_t c : v) b += (c < 0x80) ? 1 : (c < 0x800) ? 2 : (c < 0x10000) ? 3 : 4;
+		return b;
+	};
+
+	std::u32string line;
+	auto flush = [&]() {
+		if (line.empty()) return;
+		std::u32string v = ToVisual(line, dir);
+		std::string s;
+		for (char32_t c : v) detail::AppendUtf8(s, c);
+		out.push_back(s);
+		line.clear();
+	};
+
+	const size_t n = cps.size();
+	size_t i = 0;
+	while (i < n)
+	{
+		while (i < n && cps[i] == U' ') ++i;
+		if (i >= n) break;
+
+		size_t j = i;
+		while (j < n && cps[j] != U' ') ++j;
+		const std::u32string word = cps.substr(i, j - i);
+		const std::u32string cand = line.empty() ? word : line + U' ' + word;
+
+		if (visualBytes(cand) <= maxBytes)
+		{
+			line = cand;
+			i = j;
+			continue;
+		}
+		if (!line.empty())
+		{
+			flush(); // the word goes to a new line: try it again on an empty line
+			continue;
+		}
+
+		// a single word that does not fit in one line: cut it by characters
+		size_t take = word.size();
+		while (take > 1 && visualBytes(word.substr(0, take)) > maxBytes) --take;
+		line = word.substr(0, take);
+		flush();
+		i += take;
+	}
+	flush();
+	return out;
+}
+
 inline bool ContainsArabicWide(const std::wstring &s)
 {
 	std::u32string cps(s.begin(), s.end());
