@@ -36,10 +36,50 @@ ConVar hud_chat_arabic("hud_chat_arabic", "1", FCVAR_BHL_ARCHIVE, "Shape and reo
 ConVar hud_chat_arabic_margin("hud_chat_arabic_margin", "40", FCVAR_BHL_ARCHIVE, "Pixels kept free at the right when wrapping Arabic lines");
 ConVar hud_chat_arabic_send("hud_chat_arabic_send", "1", FCVAR_BHL_ARCHIVE, "Shape Arabic text before sending it, so every player sees it correctly");
 ConVar hud_chat_lang_debug("hud_chat_lang_debug", "0", FCVAR_BHL_ARCHIVE, "Print the detected keyboard language to the console");
+ConVar hud_chat_arabic_name("hud_chat_arabic_name", "1", FCVAR_BHL_ARCHIVE, "Convert an Arabic player name to the shaped form every client can display");
 
 constexpr const char CHAT_SOUND_FILE[] = "misc/talk.wav";
 constexpr const char CHAT_SOUND_FALLBACK[] = "misc/talk_bhl_fallback.wav";
 
+
+// Converts an Arabic name typed in the console or in the options menu into the shaped form
+static void SyncArabicPlayerName()
+{
+	if (!hud_chat_arabic_name.GetBool())
+		return;
+
+	static float s_nextCheck = 0.0f;
+	float now = gEngfuncs.GetAbsoluteTime();
+	if (now < s_nextCheck)
+		return;
+	s_nextCheck = now + 0.5f;
+
+	static std::string s_lastWritten;
+	char cvarName[] = "name";
+	const char *cur = gEngfuncs.pfnGetCvarString(cvarName);
+	if (!cur || !cur[0])
+		return;
+
+	std::string name = cur;
+	if (name == s_lastWritten)
+		return;
+
+	std::string visual = ArabicText::ToVisualNameUtf8(name, 31);
+	if (visual == name)
+	{
+		s_lastWritten = name;
+		return;
+	}
+
+	for (char &c : visual)
+		if (c == '"')
+			c = '\'';
+
+	char cmd[128];
+	Q_snprintf(cmd, sizeof(cmd), "name \"%s\"\n", visual.c_str());
+	gEngfuncs.pfnClientCmd(cmd);
+	s_lastWritten = visual;
+}
 //-----------------------------------------------------------------------------
 // Purpose:
 // Input  : *parent -
@@ -605,6 +645,8 @@ void CHudChat::OnTick(void)
 	m_nVisibleHeight = 0;
 
 	CHudChatLine *line = m_ChatLine;
+	
+	SyncArabicPlayerName();
 
 	if (line)
 	{
@@ -663,7 +705,6 @@ void CHudChat::OnTick(void)
 			bool api = ChatLang::QueryShortCode(vgui2::input(), code, sizeof(code), 0);
 			if (wcscmp(code, s_lastCode) != 0)
 			{
-				//ConPrintf(ConColor::Red, "[lang] api=%d code='%ls'\n", api ? 1 : 0, code);
 				ConPrintf(ConColor::Red, "[lang] win=%d api=%d code='%ls'\n", ChatLang::WindowsLangId(), api ? 1 : 0, code);
 				wcsncpy(s_lastCode, code, 15);
 				s_lastCode[15] = 0;
