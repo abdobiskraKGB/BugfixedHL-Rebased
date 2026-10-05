@@ -34,6 +34,7 @@ ConVar hud_saytext_sound("hud_saytext_sound", "1", FCVAR_BHL_ARCHIVE, "Play soun
 ConVar cl_mute_all_comms("cl_mute_all_comms", "1", FCVAR_BHL_ARCHIVE, "If 1, then all communications from a player will be blocked when that player is muted, including chat messages.");
 ConVar hud_chat_arabic("hud_chat_arabic", "1", FCVAR_BHL_ARCHIVE, "Shape and reorder Arabic text in chat");
 ConVar hud_chat_arabic_margin("hud_chat_arabic_margin", "40", FCVAR_BHL_ARCHIVE, "Pixels kept free at the right when wrapping Arabic lines");
+ConVar hud_chat_arabic_send("hud_chat_arabic_send", "1", FCVAR_BHL_ARCHIVE, "Shape Arabic text before sending it, so every player sees it correctly");
 ConVar hud_chat_lang_debug("hud_chat_lang_debug", "0", FCVAR_BHL_ARCHIVE, "Print the detected keyboard language to the console");
 
 constexpr const char CHAT_SOUND_FILE[] = "misc/talk.wav";
@@ -1289,7 +1290,22 @@ This is a very long string that I am going to attempt to paste into the cs hud c
 		ansi[len - 1] = '\0';
 		len--;
 	}
-
+	// Arabic: shape + reorder here and send line by line, so every client shows it correctly
+	if (hud_chat_arabic_send.GetBool())
+	{
+		std::vector<std::string> arabicLines = ArabicText::SplitForSendUtf8(ansi, MAX_CHAT_STRING_LEN);
+		if (!arabicLines.empty())
+		{
+			for (const std::string &arabicLine : arabicLines)
+			{
+				char szbuf[144];
+				Q_snprintf(szbuf, sizeof(szbuf), "%s \"%s\"", m_nMessageMode == MM_SAY ? "say" : "say_team", arabicLine.c_str());
+				gEngfuncs.pfnClientCmd(szbuf);
+			}
+			m_pChatInput->ClearEntry();
+			return;
+		}
+	}
 	char *pstr = ansi;
 
 	while (len > MAX_CHAT_STRING_LEN)
