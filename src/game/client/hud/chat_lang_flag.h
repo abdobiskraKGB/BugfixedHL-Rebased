@@ -10,10 +10,20 @@
 #include <type_traits>
 #include <utility>
 
-// If windows.h is already included (it normally is, through the precompiled header)
-// the keyboard layout is read straight from Windows.
+// Keyboard layout detection on Windows:
+//  - if windows.h is already included, GetKeyboardLayout is called directly;
+//  - otherwise it is looked up in user32.dll at run time. Only two kernel32 functions are
+//    declared by hand, windows.h is NOT included (it defines macros such as PostMessage
+//    that break the rest of the client code).
 #if defined(_WIN32) && defined(_WINDOWS_)
 #define CHATLANG_HAS_WINAPI 1
+#elif defined(_WIN32)
+extern "C"
+{
+__declspec(dllimport) void *__stdcall GetModuleHandleA(const char *lpModuleName);
+__declspec(dllimport) void *__stdcall GetProcAddress(void *hModule, const char *lpProcName);
+}
+#define CHATLANG_HAS_DYNAMIC_WINAPI 1
 #endif
 
 namespace ChatLang
@@ -133,11 +143,25 @@ bool QueryShortCode(T *, wchar_t *buf, int, long)
 	return false;
 }
 
-// Primary language id of the active keyboard layout, -1 when not available (needs windows.h).
+// Primary language id of the active keyboard layout, -1 when not available.
 inline int WindowsLangId()
 {
-#ifdef CHATLANG_HAS_WINAPI
+#if defined(CHATLANG_HAS_WINAPI)
 	return (int)(((uintptr_t)GetKeyboardLayout(0)) & 0x3FF);
+#elif defined(CHATLANG_HAS_DYNAMIC_WINAPI)
+	typedef void *(__stdcall * GetKeyboardLayoutFn)(unsigned long);
+	static GetKeyboardLayoutFn s_fn = nullptr;
+	static bool s_tried = false;
+	if (!s_tried)
+	{
+		s_tried = true;
+		void *hUser32 = GetModuleHandleA("user32.dll");
+		if (hUser32)
+			s_fn = reinterpret_cast<GetKeyboardLayoutFn>(GetProcAddress(hUser32, "GetKeyboardLayout"));
+	}
+	if (!s_fn)
+		return -1;
+	return (int)(((uintptr_t)s_fn(0)) & 0x3FF);
 #else
 	return -1;
 #endif
