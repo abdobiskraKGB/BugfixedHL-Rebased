@@ -474,6 +474,79 @@ inline std::string ToVisualNameUtf8(const std::string &logical, size_t maxBytes 
 	}
 }
 
+// ---- visual -> logical (the opposite of ToVisual) --------------------------------------------
+// Text sent by a client that shapes before sending (or by the server plugin) is in "visual" order
+// with presentation forms. Translation services and other tools need normal Arabic, so this brings
+// it back. The paragraph direction cannot be known for sure: right-most strong letter Arabic = RTL,
+// left-most strong letter Latin = LTR, otherwise the language with more letters wins.
+namespace detail
+{
+// presentation forms -> base letters. Lam-alef ligatures stay ONE character until after the
+// reordering, otherwise the two letters of the ligature would be swapped.
+inline std::u32string UnshapeLetters(const std::u32string &in)
+{
+	std::u32string out;
+	for (char32_t c : in)
+	{
+		if (c >= 0xFEF5 && c <= 0xFEFC) { out.push_back(c); continue; }
+		char32_t base = c;
+		for (char32_t b = 0x0621; b <= 0x06D3; ++b)
+		{
+			const ShapeEntry *e = FindShape(b);
+			if (e && (e->iso == c || e->fin == c || e->ini == c || e->med == c)) { base = b; break; }
+		}
+		out.push_back(base);
+	}
+	return out;
+}
+
+inline std::u32string ExpandLigatures(const std::u32string &in)
+{
+	std::u32string out;
+	for (char32_t c : in)
+	{
+		if (c >= 0xFEF5 && c <= 0xFEFC)
+		{
+			out.push_back(0x0644);
+			out.push_back(c <= 0xFEF6 ? 0x0622 : c <= 0xFEF8 ? 0x0623 : c <= 0xFEFA ? 0x0625 : 0x0627);
+		}
+		else out.push_back(c);
+	}
+	return out;
+}
+} // namespace detail
+
+inline std::u32string ToLogical(const std::u32string &visual)
+{
+	if (!HasPresentationForms(visual)) return visual;
+
+	std::u32string u = detail::UnshapeLetters(visual);
+	int first = -1, last = -1;
+	size_t nAr = 0, nLat = 0;
+	for (size_t i = 0; i < u.size(); ++i)
+	{
+		auto k = detail::Classify(u[i]);
+		if (k == detail::C_L) { nLat++; if (first < 0) first = 0; last = 0; }
+		else if (k == detail::C_R) { nAr++; if (first < 0) first = 1; last = 1; }
+	}
+	bool rtl;
+	if (first == 1) rtl = true;
+	else if (last == 0) rtl = false;
+	else rtl = (nAr >= nLat);
+	return detail::ExpandLigatures(detail::Reorder(u, rtl));
+}
+
+// UTF-8 in, UTF-8 out. Text that is not shaped (or not valid UTF-8) is returned unchanged.
+inline std::string ToLogicalUtf8(const std::string &visual)
+{
+	std::u32string cps;
+	if (!detail::DecodeUtf8(visual, cps) || !HasPresentationForms(cps)) return visual;
+	std::u32string v = ToLogical(cps);
+	std::string out;
+	for (char32_t c : v) detail::AppendUtf8(out, c);
+	return out;
+}
+
 inline bool ContainsArabicWide(const std::wstring &s)
 {
 	std::u32string cps(s.begin(), s.end());
