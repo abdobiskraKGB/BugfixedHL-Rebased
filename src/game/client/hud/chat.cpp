@@ -26,7 +26,9 @@
 #include "hud/ag/ag_location.h"
 #include "gameui/gameui_viewport.h"
 #include "chat_lang_flag.h"
+#include "chat_translate.h"
 #include "arabic_text.h"
+
 
 ConVar hud_saytext("hud_saytext", "1", FCVAR_BHL_ARCHIVE, "Enable/disable display of new chat messages");
 ConVar hud_saytext_time("hud_saytext_time", "12", FCVAR_BHL_ARCHIVE, "How long for new messages should stay on the screen");
@@ -1640,6 +1642,7 @@ void CHudChat::ChatPrintf(int iPlayerIndex, const char *fmt, ...)
 
 	if (pmsg[msglen - 1] != '\n')
 		CResults::Get().AddLog("\n", isPlayerChat);
+		ChatTranslate::OnChatLine(iPlayerIndex, pmsg, playerName);
 }
 
 void CHudChatEntry::OnKeyCodeTyped(vgui2::KeyCode code)
