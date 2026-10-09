@@ -213,6 +213,11 @@ void CHttpClient::WorkerThreadFunc() noexcept
 			curl_easy_setopt(hCurl, CURLOPT_XFERINFODATA, &req);
 			curl_easy_setopt(hCurl, CURLOPT_URL, req.m_URL.c_str());
 			curl_easy_setopt(hCurl, CURLOPT_FAILONERROR, 1L);
+			
+			// Never let a stuck connection block the queue (translations and updates share it)
+			curl_easy_setopt(hCurl, CURLOPT_CONNECTTIMEOUT, 10L);
+			curl_easy_setopt(hCurl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+			curl_easy_setopt(hCurl, CURLOPT_LOW_SPEED_TIME, 20L);
 
 			m_bAbortCurrentDownload = false;
 
