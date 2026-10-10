@@ -312,3 +312,4 @@ void CUpdateChecker::OnUpdateFound()
 	// Show dialog
 	CUpdateNotificationDialog::Get()->Activate();
 }
+#include "hud/chat_translate_impl.h"
