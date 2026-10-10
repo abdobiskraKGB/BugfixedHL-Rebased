@@ -12,6 +12,7 @@
 // separate thread, so the game never freezes. The answer is printed in the chat as a new line.
 #pragma once
 
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,9 +24,10 @@
 #include "updater/http_client.h"
 #include "hud/arabic_text.h"
 
-// these two live in hud/chat.cpp
+// these live in hud/chat.cpp
 void ChatTranslate_ShowLine(const char *text);
 bool ChatTranslate_IsLocalPlayer(int client);
+void ChatTranslate_SendLine(const char *text, bool team); // sends text as chat (Arabic shaped, long text split)
 
 static ConVar hud_translate("hud_translate", "0", FCVAR_BHL_ARCHIVE,
     "Translate incoming chat messages. The text of the messages is sent to a translation service (Google / MyMemory, or hud_translate_url).");
@@ -35,6 +37,12 @@ static ConVar hud_translate_own("hud_translate_own", "0", FCVAR_BHL_ARCHIVE,
     "Also translate your own messages");
 static ConVar hud_translate_url("hud_translate_url", "", FCVAR_BHL_ARCHIVE,
     "Optional address of your own translation script (translate.php). Empty = Google/MyMemory directly");
+static ConVar hud_translate_send("hud_translate_send", "", FCVAR_BHL_ARCHIVE,
+    "Translate the messages YOU write into this language before sending them (en, fr, ru, ar...). Empty or off = disabled. The other players read the translation.");
+static ConVar hud_translate_send_both("hud_translate_send_both", "0", FCVAR_BHL_ARCHIVE,
+    "With hud_translate_send: also send your original text, before the translation");
+static ConVar hud_translate_debug("hud_translate_debug", "0", 0,
+    "Print in the console what the translation does (why a message is skipped, requests, errors)");
 static ConVar hud_translate_email("hud_translate_email", "", FCVAR_BHL_ARCHIVE,
     "Optional e-mail address for MyMemory (raises its daily limit from 5000 to 50000 characters)");
 
@@ -282,6 +290,22 @@ inline std::string Trim(const std::string &s)
 	return s.substr(b, e - b);
 }
 
+// "AR", "en", "pt-br" -> lower case; "" when empty, "off", "0" or not a language code
+inline std::string NormalizeLang(const std::string &in)
+{
+	std::string s;
+	for (char c : in)
+		s += (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+	if (s == "off" || s == "0")
+		return std::string();
+	if (s.size() < 2 || s.size() > 7)
+		return std::string();
+	for (char c : s)
+		if (!((c >= 'a' && c <= 'z') || c == '-'))
+			return std::string();
+	return s;
+}
+
 // removes "^1" style color codes and control characters
 inline std::string StripCodes(const std::string &s)
 {
@@ -419,6 +443,19 @@ inline bool ParseCustom(const std::string &data, std::string &out)
 	return !out.empty();
 }
 
+// ------------------------------------------------------------------ debug output
+inline void Dbg(const char *fmt, ...)
+{
+	if (!hud_translate_debug.GetBool())
+		return;
+	char buf[600];
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+	ConPrintf("[tr] %s\n", buf);
+}
+
 // ------------------------------------------------------------------ the translation job
 struct Job
 {
@@ -426,6 +463,9 @@ struct Job
 	std::string body;   // text to translate (normal Arabic order)
 	std::string who;    // player name
 	std::string target; // target language
+	bool outgoing = false;     // true: it is a message YOU wrote, the translation is SENT to the others
+	bool team = false;         // outgoing: say_team instead of say
+	bool originalSent = false; // outgoing: the original text was already sent
 };
 
 inline std::unordered_map<std::string, std::string> &Cache()
@@ -458,14 +498,37 @@ inline void Done(const Job &job, const std::string &translated, const std::strin
 	if (Pending() > 0)
 		Pending()--;
 
-	if (translated.empty() || translated == job.body)
-		return;
-	if (!detected.empty() && detected.substr(0, 2) == job.target.substr(0, 2))
-		return; // it was already in the target language
+	const bool sameLang = !detected.empty() && detected.substr(0, 2) == job.target.substr(0, 2);
+	const bool usable = !translated.empty() && translated != job.body && !sameLang;
 
-	if (Cache().size() > 500)
-		Cache().clear();
-	Cache()[job.key] = translated;
+	if (usable)
+	{
+		if (Cache().size() > 500)
+			Cache().clear();
+		Cache()[job.key] = translated;
+	}
+
+	if (job.outgoing)
+	{
+		if (usable)
+		{
+			ChatTranslate_SendLine(translated.c_str(), job.team);
+		}
+		else
+		{
+			// never lose the message: send what you wrote
+			Dbg("outgoing: no usable translation, sending your original text");
+			if (!job.originalSent)
+				ChatTranslate_SendLine(job.body.c_str(), job.team);
+		}
+		return;
+	}
+
+	if (!usable)
+	{
+		Dbg(sameLang ? "already in the target language" : "no usable translation");
+		return;
+	}
 
 	Show(job, translated);
 }
@@ -479,9 +542,12 @@ inline void StartCustom(const Job &job, const std::string &baseUrl)
 	url += (url.find('?') == std::string::npos) ? "?" : "&";
 	url += "text=" + UrlEncode(job.body) + "&from=auto&to=" + UrlEncode(job.target);
 
+	Dbg("asking your script: %s", url.substr(0, 120).c_str());
 	CHttpClient::Request req(url);
 	req.SetCallback([job](CHttpClient::Response &resp) {
 		std::string out;
+		if (!resp.IsSuccess())
+			Dbg("your script failed: %s", resp.GetError().c_str());
 		if (resp.IsSuccess() && ParseCustom(std::string(resp.GetResponseData().data(), resp.GetResponseData().size()), out))
 			Done(job, out, std::string());
 		else
@@ -494,17 +560,20 @@ inline void StartGoogle(const Job &job)
 {
 	if (gEngfuncs.GetAbsoluteTime() < GooglePausedUntil())
 	{
+		Dbg("google is paused (it answered 429), using MyMemory");
 		StartMyMemory(job);
 		return;
 	}
 
 	std::string url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" + UrlEncode(job.target) + "&dt=t&q=" + UrlEncode(job.body);
 
+	Dbg("asking google");
 	CHttpClient::Request req(url);
 	req.AddHeader("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36");
 	req.SetCallback([job](CHttpClient::Response &resp) {
 		if (!resp.IsSuccess())
 		{
+			Dbg("google failed: %s", resp.GetError().c_str());
 			// 429: Google blocks this address for a while, do not insist
 			if (resp.GetError().find("429") != std::string::npos)
 				GooglePausedUntil() = gEngfuncs.GetAbsoluteTime() + 900.0;
@@ -535,9 +604,12 @@ inline void StartMyMemory(const Job &job)
 	if (!email.empty())
 		url += "&de=" + UrlEncode(email);
 
+	Dbg("asking mymemory (%s)", (src + "|" + job.target).c_str());
 	CHttpClient::Request req(url);
 	req.SetCallback([job](CHttpClient::Response &resp) {
 		std::string out;
+		if (!resp.IsSuccess())
+			Dbg("mymemory failed: %s", resp.GetError().c_str());
 		if (resp.IsSuccess() && ParseMyMemory(std::string(resp.GetResponseData().data(), resp.GetResponseData().size()), out))
 			Done(job, out, std::string());
 		else
@@ -553,19 +625,23 @@ inline void StartMyMemory(const Job &job)
 //   name    = the name of the player
 void OnChatLine(int client, const char *line, const char *name)
 {
-	if (!hud_translate.GetBool() || client <= 0 || !line || !name)
+	if (!hud_translate.GetBool())
+	{
+		Dbg("hud_translate is 0: type  hud_translate 1");
+		return;
+	}
+	if (client <= 0 || !line || !name)
 		return;
 
 	if (!hud_translate_own.GetBool() && ChatTranslate_IsLocalPlayer(client))
+	{
+		Dbg("skipped: your own message (hud_translate_own 0)");
 		return;
+	}
 
-	// target language: letters and "-" only, otherwise Arabic
-	std::string target = hud_translate_lang.GetString();
-	bool valid = target.size() >= 2 && target.size() <= 7;
-	for (char c : target)
-		if (!((c >= 'a' && c <= 'z') || c == '-'))
-			valid = false;
-	if (!valid)
+	// target language: your language, Arabic if the setting is not a language code
+	std::string target = NormalizeLang(hud_translate_lang.GetString());
+	if (target.empty())
 		target = "ar";
 
 	std::string body = StripCodes(ExtractBody(line, name));
@@ -575,7 +651,10 @@ void OnChatLine(int client, const char *line, const char *name)
 	body = Trim(body);
 
 	if (!WorthTranslating(body, target))
+	{
+		Dbg("skipped (too short / symbols only / already in %s): %s", target.c_str(), body.substr(0, 60).c_str());
 		return;
+	}
 
 	Job job;
 	job.key = target + "|" + body;
@@ -586,12 +665,16 @@ void OnChatLine(int client, const char *line, const char *name)
 	auto it = Cache().find(job.key);
 	if (it != Cache().end())
 	{
+		Dbg("from the cache");
 		Show(job, it->second);
 		return;
 	}
 
 	if (Pending() >= 6) // too many requests waiting: drop this one
+	{
+		Dbg("too many requests waiting, message dropped");
 		return;
+	}
 	Pending()++;
 
 	const std::string custom = hud_translate_url.GetString();
@@ -599,6 +682,51 @@ void OnChatLine(int client, const char *line, const char *name)
 		StartCustom(job, custom);
 	else
 		StartGoogle(job);
+}
+
+bool SendTranslated(const char *text, bool team)
+{
+	const std::string target = NormalizeLang(hud_translate_send.GetString());
+	if (target.empty() || !text)
+		return false;
+
+	std::string body = Trim(ArabicText::ToLogicalUtf8(text));
+
+	// commands, very short text, smileys and text that is already in the target language
+	// are sent as usual
+	if (!WorthTranslating(body, target))
+		return false;
+
+	Job job;
+	job.key = target + "|" + body;
+	job.body = body;
+	job.target = target;
+	job.outgoing = true;
+	job.team = team;
+
+	if (hud_translate_send_both.GetBool())
+	{
+		ChatTranslate_SendLine(body.c_str(), team);
+		job.originalSent = true;
+	}
+
+	auto it = Cache().find(job.key);
+	if (it != Cache().end())
+	{
+		Dbg("outgoing: from the cache");
+		ChatTranslate_SendLine(it->second.c_str(), team);
+		return true;
+	}
+
+	Pending()++;
+
+	const std::string custom = hud_translate_url.GetString();
+	if (!custom.empty())
+		StartCustom(job, custom);
+	else
+		StartGoogle(job);
+
+	return true;
 }
 
 } // namespace ChatTranslate

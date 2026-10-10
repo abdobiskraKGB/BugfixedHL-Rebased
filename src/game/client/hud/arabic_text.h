@@ -547,6 +547,33 @@ inline std::string ToLogicalUtf8(const std::string &visual)
 	return out;
 }
 
+// Plain text (no Arabic): cuts it into lines of at most maxBytes, at spaces when possible and never
+// inside a UTF-8 character.
+inline std::vector<std::string> SplitPlainUtf8(const std::string &text, size_t maxBytes)
+{
+	std::vector<std::string> out;
+	const size_t n = text.size();
+	size_t i = 0;
+	while (i < n)
+	{
+		while (i < n && text[i] == ' ') ++i;
+		if (i >= n) break;
+		if (n - i <= maxBytes)
+		{
+			out.push_back(text.substr(i));
+			break;
+		}
+		size_t end = i + maxBytes; // exclusive; end < n here
+		while (end > i && (((unsigned char)text[end]) & 0xC0) == 0x80) --end;
+		const size_t sp = text.rfind(' ', end);
+		if (sp != std::string::npos && sp > i) end = sp;
+		if (end <= i) end = i + 1;
+		out.push_back(text.substr(i, end - i));
+		i = end;
+	}
+	return out;
+}
+
 inline bool ContainsArabicWide(const std::wstring &s)
 {
 	std::u32string cps(s.begin(), s.end());
