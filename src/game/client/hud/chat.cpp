@@ -56,7 +56,26 @@ bool ChatTranslate_IsLocalPlayer(int client)
 	CPlayerInfo *self = GetThisPlayerInfo();
 	return self && self->GetIndex() == client;
 }
+// Sends text as chat: Arabic is shaped and long text is split into several lines
+void ChatTranslate_SendLine(const char *text, bool team)
+{
+	std::vector<std::string> lines;
+	if (hud_chat_arabic_send.GetBool())
+		lines = ArabicText::SplitForSendUtf8(text, MAX_CHAT_STRING_LEN);
+	if (lines.empty())
+		lines = ArabicText::SplitPlainUtf8(text, MAX_CHAT_STRING_LEN);
 
+	for (std::string &line : lines)
+	{
+		for (char &c : line)
+			if (c == '"')
+				c = '\'';
+
+		char szbuf[144];
+		Q_snprintf(szbuf, sizeof(szbuf), "%s \"%s\"", team ? "say_team" : "say", line.c_str());
+		gEngfuncs.pfnClientCmd(szbuf);
+	}
+}
 
 // Converts an Arabic name typed in the console or in the options menu into the shaped form
 static void SyncArabicPlayerName()
@@ -1346,6 +1365,12 @@ This is a very long string that I am going to attempt to paste into the cs hud c
 	{
 		ansi[len - 1] = '\0';
 		len--;
+	}
+	// Translate what I wrote for the other players before sending it (hud_translate_send)
+	if (ChatTranslate::SendTranslated(ansi, m_nMessageMode == MM_SAY_TEAM))
+	{
+		m_pChatInput->ClearEntry();
+		return;
 	}
 	// Arabic: shape + reorder here and send line by line, so every client shows it correctly
 	if (hud_chat_arabic_send.GetBool())
