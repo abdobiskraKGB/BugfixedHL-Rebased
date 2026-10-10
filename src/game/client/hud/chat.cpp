@@ -43,6 +43,20 @@ ConVar hud_chat_arabic_name("hud_chat_arabic_name", "1", FCVAR_BHL_ARCHIVE, "Con
 constexpr const char CHAT_SOUND_FILE[] = "misc/talk.wav";
 constexpr const char CHAT_SOUND_FALLBACK[] = "misc/talk_bhl_fallback.wav";
 
+// Used by the translation code (which lives in updater/update_checker.cpp)
+void ChatTranslate_ShowLine(const char *text)
+{
+	CHudChat *pChat = CHudChat::Get();
+	if (pChat)
+		pChat->Printf("%s", text);
+}
+
+bool ChatTranslate_IsLocalPlayer(int client)
+{
+	CPlayerInfo *self = GetThisPlayerInfo();
+	return self && self->GetIndex() == client;
+}
+
 
 // Converts an Arabic name typed in the console or in the options menu into the shaped form
 static void SyncArabicPlayerName()
