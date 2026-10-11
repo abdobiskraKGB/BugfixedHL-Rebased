@@ -402,8 +402,8 @@ void CHudSpectator::SetWayInterpolation(cameraWayPoint_t *prev, cameraWayPoint_t
 bool CHudSpectator::ShouldDrawOverview()
 {
 	// draw only in sepctator mode
-	//if (!g_iUser1)
-		return true;
+	if (!g_iUser1)
+		return false;
 
 	// Only draw the overview if Map Mode is selected for this view
 	if (m_iDrawCycle == 0 && ((g_iUser1 != OBS_MAP_FREE) && (g_iUser1 != OBS_MAP_CHASE)))
@@ -566,8 +566,8 @@ void CHudSpectator::Draw(float flTime)
 	float color[3];
 
 	// draw only in spectator mode
-	//if (!g_iUser1)
-	//	return;
+	if (!g_iUser1)
+		return;
 
 	// if user pressed zoom, aplly changes
 	if ((m_zoomDelta != 0.0f) && (g_iUser1 == OBS_MAP_FREE))
