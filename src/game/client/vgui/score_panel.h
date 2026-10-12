@@ -126,6 +126,15 @@ private:
 	// (hud_scoreboard_twoteams). In every other case the normal single list is used.
 	vgui2::SectionedListPanel *m_pListLeft = nullptr;
 	vgui2::SectionedListPanel *m_pListRight = nullptr;
+	vgui2::Panel *m_pBoxLeft = nullptr;  // colored banner + frame behind each list
+	vgui2::Panel *m_pBoxRight = nullptr;
+	vgui2::HFont m_hBannerNameFont = 0;
+	vgui2::HFont m_hBannerScoreFont = 0;
+	bool m_bTwoShowSteam = true; // columns that fit in the two-team layout
+	bool m_bTwoShowEff = true;
+	int m_iTwoPanelWideReal = 0; // real sizes used by the two-team layout
+	int m_iTwoListWideReal = 0;
+	int m_iTwoNameWide = 0;
 	bool m_bTwoTeamMode = false;
 	int m_iLeftTeam = 0;
 	int m_iRightTeam = 0;
@@ -165,16 +174,20 @@ private:
 	CPanelAnimationVarAliasType(int, m_iVerticalMargin, "vertical_margin", "30", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iBottomPadding, "bottom_padding", "4", "proportional_int");
 
-	// Two-team layout (can be changed in ScorePanel.res). The columns must add up to two_list_wide.
-	CPanelAnimationVarAliasType(int, m_iTwoPanelWide, "two_wide", "624", "proportional_int");
-	CPanelAnimationVarAliasType(int, m_iTwoListWide, "two_list_wide", "302", "proportional_int");
+	// Two-team layout (can be changed in ScorePanel.res).
+	// The name column takes what is left of two_wide. When it gets smaller than two_min_name,
+	// the SteamID column and then the Eff column are dropped.
+	CPanelAnimationVarAliasType(int, m_iTwoPanelWide, "two_wide", "760", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iTwoListGap, "two_list_gap", "6", "proportional_int");
-	CPanelAnimationVarAliasType(int, m_iTwoColAvatar, "two_column_avatar", "24", "proportional_int");
-	CPanelAnimationVarAliasType(int, m_iTwoColClan, "two_column_clan", "42", "proportional_int");
-	CPanelAnimationVarAliasType(int, m_iTwoColName, "two_column_name", "108", "proportional_int");
-	CPanelAnimationVarAliasType(int, m_iTwoColFrags, "two_column_frags", "40", "proportional_int");
-	CPanelAnimationVarAliasType(int, m_iTwoColDeaths, "two_column_deaths", "40", "proportional_int");
-	CPanelAnimationVarAliasType(int, m_iTwoColPing, "two_column_ping", "48", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoColAvatar, "two_column_avatar", "22", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoColSteamID, "two_column_steamid", "78", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoColEff, "two_column_eff", "34", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoColFrags, "two_column_frags", "36", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoColDeaths, "two_column_deaths", "38", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoColPing, "two_column_ping", "52", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoMinName, "two_min_name", "80", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoBannerTall, "two_banner_tall", "44", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoBannerGap, "two_banner_gap", "4", "proportional_int");
 
 	/**
 	 * Updates all labels, recreates all sections, recalculates all data.
@@ -330,9 +343,19 @@ private:
 	bool FitTwoLists(int &height);
 
 	/**
-	 * "[DZA] Abdo" -> clan "DZA", name "Abdo". Names without a tag are returned unchanged.
+	 * Computes the widths of the two-team layout for the current screen.
 	 */
-	static void SplitClanTag(const char *full, char *clan, int clanSize, char *name, int nameSize);
+	void GetTwoLayout();
+
+	/**
+	 * Gets the banner fonts from the chat scheme.
+	 */
+	void UpdateBannerFonts();
+
+	/**
+	 * Shows the name, the number of players and the score of the team in its banner.
+	 */
+	void UpdateTeamBanner(int nTeamID, const wchar_t *name, int teamPlayers, int totalPlayers, int score);
 
 	/**
 	 * Sorts rows in DESC order by frags.

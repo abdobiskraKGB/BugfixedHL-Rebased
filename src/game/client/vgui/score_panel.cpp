@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <string>
 #include <vgui/IImage.h>
+#include <vgui/IScheme.h>
 #include <vgui/IInputInternal.h>
 #include <vgui/ISurface.h>
 #include <vgui/ISystem.h>
@@ -128,6 +129,99 @@ private:
 	bool m_bIsMuted = false;
 };
 
+// The colored box behind the list of a team: a banner with the name of the team, the number of
+// players and the score (big, on the right), and a frame around the banner and the list.
+class CTeamBox : public vgui2::Panel
+{
+	typedef vgui2::Panel BaseClass;
+
+public:
+	CTeamBox(vgui2::Panel *parent, const char *panelName)
+	    : BaseClass(parent, panelName)
+	{
+		SetMouseInputEnabled(false);
+		SetKeyBoardInputEnabled(false);
+		SetPaintBackgroundEnabled(false);
+
+		m_pName = CreateLabel("BoxName", vgui2::Label::a_west);
+		m_pCount = CreateLabel("BoxCount", vgui2::Label::a_west);
+		m_pScore = CreateLabel("BoxScore", vgui2::Label::a_east);
+	}
+
+	void SetFonts(vgui2::HFont nameFont, vgui2::HFont scoreFont)
+	{
+		if (nameFont)
+		{
+			m_pName->SetFont(nameFont);
+			m_pCount->SetFont(nameFont);
+		}
+		if (scoreFont)
+			m_pScore->SetFont(scoreFont);
+	}
+
+	void SetTeamColor(Color color) { m_Color = color; }
+
+	void SetTexts(const wchar_t *name, const wchar_t *count, const wchar_t *score)
+	{
+		m_pName->SetText(name);
+		m_pCount->SetText(count);
+		m_pScore->SetText(score);
+	}
+
+	// Places the banner labels. bannerTall = height of the banner, in pixels.
+	void SetBanner(int bannerTall)
+	{
+		m_iBannerTall = bannerTall;
+
+		int wide = 0, tall = 0;
+		GetSize(wide, tall);
+		const int pad = bannerTall / 5;
+		const int scoreWide = wide / 3;
+		m_pName->SetBounds(pad, 0, wide - scoreWide - pad, bannerTall / 2 + pad / 2);
+		m_pCount->SetBounds(pad, bannerTall / 2, wide - scoreWide - pad, bannerTall / 2);
+		m_pScore->SetBounds(wide - scoreWide - pad, 0, scoreWide, bannerTall);
+	}
+
+	virtual void Paint() override
+	{
+		int wide = 0, tall = 0;
+		GetSize(wide, tall);
+
+		// banner
+		vgui2::surface()->DrawSetColor(m_Color.r(), m_Color.g(), m_Color.b(), 80);
+		vgui2::surface()->DrawFilledRect(0, 0, wide, m_iBannerTall);
+
+		// frame around the banner and the list
+		vgui2::surface()->DrawSetColor(m_Color.r(), m_Color.g(), m_Color.b(), 200);
+		vgui2::surface()->DrawFilledRect(0, 0, wide, 1);
+		vgui2::surface()->DrawFilledRect(0, tall - 1, wide, tall);
+		vgui2::surface()->DrawFilledRect(0, 0, 1, tall);
+		vgui2::surface()->DrawFilledRect(wide - 1, 0, wide, tall);
+		vgui2::surface()->DrawFilledRect(0, m_iBannerTall - 1, wide, m_iBannerTall);
+	}
+
+private:
+	vgui2::Label *CreateLabel(const char *name, vgui2::Label::Alignment align)
+	{
+		vgui2::Label *label = new vgui2::Label(this, name, "");
+		label->SetPaintBackgroundEnabled(false);
+		label->SetContentAlignment(align);
+		label->SetFgColor(Color(255, 255, 255, 255));
+		return label;
+	}
+
+	vgui2::Label *m_pName = nullptr;
+	vgui2::Label *m_pCount = nullptr;
+	vgui2::Label *m_pScore = nullptr;
+	Color m_Color = Color(255, 255, 255, 255);
+	int m_iBannerTall = 0;
+};
+
+CTeamBox *AsBox(vgui2::Panel *panel)
+{
+	return static_cast<CTeamBox *>(panel);
+}
+
 }
 
 CScorePanel::CScorePanel()
@@ -165,6 +259,11 @@ CScorePanel::CScorePanel()
 	// Two-team layout: one list per team (hidden until needed)
 	m_pListLeft = CreateTeamList("PlayerListLeft");
 	m_pListRight = CreateTeamList("PlayerListRight");
+
+	m_pBoxLeft = new CTeamBox(this, "BoxLeft");
+	m_pBoxLeft->SetVisible(false);
+	m_pBoxRight = new CTeamBox(this, "BoxRight");
+	m_pBoxRight->SetVisible(false);
 
 	for (int i = 1; i <= MAX_PLAYERS; i++)
 	{
@@ -241,6 +340,8 @@ void CScorePanel::ApplySchemeSettings(vgui2::IScheme *pScheme)
 		teamList->SetPaintBackgroundType(0);
 		teamList->SetBgColor(Color(0, 0, 0, 84));
 	}
+
+	UpdateBannerFonts();
 
 	m_ThisPlayerBgColor = pScheme->GetColor("ThisPlayerBgColor", Color(0, 0, 0, 0));
 	m_KillerBgColor = pScheme->GetColor("KillerBgColor", Color(0, 0, 0, 0));
@@ -491,9 +592,7 @@ void CScorePanel::CreateSection(int nTeamID)
 
 	if (m_bTwoTeamMode && nTeamID == HEADER_SECTION_ID)
 	{
-		// The column titles are needed on top of both lists
-		CreateSectionIn(m_pListLeft, nTeamID);
-		CreateSectionIn(m_pListRight, nTeamID);
+		// Not needed: in the two-team layout the first row of each team shows the column titles
 		return;
 	}
 
@@ -502,8 +601,12 @@ void CScorePanel::CreateSection(int nTeamID)
 
 void CScorePanel::CreateSectionIn(vgui2::SectionedListPanel *list, int nTeamID)
 {
-	// true for the two lists of the two-team layout (compact columns, clan column)
+	// true for the two lists of the two-team layout (compact columns)
 	const bool two = (list != m_pPlayerList);
+
+	// The row with the column titles: the header section in the normal layout,
+	// the first row of each team in the two-team layout.
+	const bool titleRow = (nTeamID == HEADER_SECTION_ID) || (two && nTeamID != TEAM_SPECTATOR);
 
 	list->AddSection(nTeamID, "", StaticPlayerSortFuncByFrags);
 	list->SetSectionFgColor(nTeamID, g_pViewport->GetTeamColor(nTeamID));
@@ -513,62 +616,58 @@ void CScorePanel::CreateSectionIn(vgui2::SectionedListPanel *list, int nTeamID)
 		list->SetSectionAlwaysVisible(nTeamID);
 		list->SetSectionDividerColor(nTeamID, Color(0, 0, 0, 0));
 	}
+	else if (two && titleRow)
+	{
+		list->SetSectionAlwaysVisible(nTeamID);
+	}
 
 	// Avatar
 	list->AddColumnToSection(nTeamID, "avatar", "",
 	    vgui2::SectionedListPanel::COLUMN_IMAGE | vgui2::SectionedListPanel::COLUMN_CENTER,
 	    two ? m_iTwoColAvatar : m_iColumnWidthAvatar);
 
-	// Clan tag (two-team layout only)
-	if (two)
-	{
-		list->AddColumnToSection(nTeamID, "clan", nTeamID == HEADER_SECTION_ID ? "Clan" : "",
-		    vgui2::SectionedListPanel::COLUMN_BRIGHT,
-		    m_iTwoColClan);
-	}
-
 	// Name
 	const char *nameCol;
 
-	if (nTeamID == HEADER_SECTION_ID)
+	if (titleRow)
 		nameCol = "#PlayerName";
 	else
 		nameCol = "??? (?/?)";
 
 	list->AddColumnToSection(nTeamID, "name", nameCol,
 	    vgui2::SectionedListPanel::COLUMN_BRIGHT | (gHUD.GetColorCodeAction() == ColorCodeAction::Handle ? vgui2::SectionedListPanel::COLUMN_COLORED : 0),
-	    two ? m_iTwoColName : GetNameColumnWidth());
+	    two ? m_iTwoNameWide : GetNameColumnWidth());
 
-	// SteamID (normal layout only)
-	if (!two && hud_scoreboard_showsteamid.GetBool())
+	// SteamID
+	if (two ? m_bTwoShowSteam : hud_scoreboard_showsteamid.GetBool())
 	{
-		list->AddColumnToSection(nTeamID, "steamid", nTeamID == HEADER_SECTION_ID ? "#BHL_Scores_ColSteamID" : "",
+		list->AddColumnToSection(nTeamID, "steamid", titleRow ? "#BHL_Scores_ColSteamID" : "",
 		    vgui2::SectionedListPanel::COLUMN_BRIGHT,
-		    m_iColumnWidthSteamID);
+		    two ? m_iTwoColSteamID : m_iColumnWidthSteamID);
 	}
 
-	// Efficiency (normal layout only)
-	if (!two && hud_scoreboard_showeff.GetBool())
+	// Efficiency
+	if (two ? m_bTwoShowEff : hud_scoreboard_showeff.GetBool())
 	{
-		list->AddColumnToSection(nTeamID, "eff", nTeamID == HEADER_SECTION_ID ? "#BHL_Scores_ColEff" : "???",
+		list->AddColumnToSection(nTeamID, "eff", titleRow ? "#BHL_Scores_ColEff" : "???",
 		    vgui2::SectionedListPanel::COLUMN_BRIGHT,
-		    m_iColumnWidthEff);
+		    two ? m_iTwoColEff : m_iColumnWidthEff);
 	}
 
 	// Frags
-	list->AddColumnToSection(nTeamID, "frags", nTeamID == HEADER_SECTION_ID ? "#PlayerScore" : "???",
+	list->AddColumnToSection(nTeamID, "frags", titleRow ? "#PlayerScore" : "???",
 	    vgui2::SectionedListPanel::COLUMN_BRIGHT,
 	    two ? m_iTwoColFrags : m_iColumnWidthFrags);
 
 	// Deaths
-	list->AddColumnToSection(nTeamID, "deaths", nTeamID == HEADER_SECTION_ID ? "#PlayerDeath" : "???",
+	list->AddColumnToSection(nTeamID, "deaths", titleRow ? "#PlayerDeath" : "???",
 	    vgui2::SectionedListPanel::COLUMN_BRIGHT,
 	    two ? m_iTwoColDeaths : m_iColumnWidthDeaths);
 
 	// Ping
 	const char *pingLabel;
 
-	if (nTeamID == HEADER_SECTION_ID)
+	if (titleRow)
 		pingLabel = hud_scoreboard_showloss.GetBool() ? "#BHL_Scores_ColPingLoss" : "#BHL_Scores_ColPing";
 	else
 		pingLabel = "";
@@ -659,19 +758,7 @@ void CScorePanel::UpdateClientInfo(int client)
 		{
 			snprintf(buf, sizeof(buf), "%s", pi->GetDisplayName(gHUD.GetColorCodeAction() == ColorCodeAction::Strip));
 		}
-		if (m_bTwoTeamMode)
-		{
-			// the clan tag has its own column in the two-team layout
-			char clan[16];
-			char nameOnly[128];
-			SplitClanTag(buf, clan, sizeof(clan), nameOnly, sizeof(nameOnly));
-			playerKv->SetString("clan", clan);
-			playerKv->SetString("name", nameOnly);
-		}
-		else
-		{
-			playerKv->SetString("name", buf);
-		}
+		playerKv->SetString("name", buf);
 
 		// SteamID
 		playerKv->SetString("steamid", pi->GetSteamID());
@@ -807,6 +894,13 @@ void CScorePanel::UpdateScoresAndCounts()
 			// set localizedName to pszTeamName converted to WString
 			g_pVGuiLocalize->ConvertANSIToUnicode(pszTeamName, wbuf2, sizeof(wbuf2));
 			localizedName = wbuf2;
+		}
+
+		if (m_bTwoTeamMode && nTeamID != TEAM_SPECTATOR)
+		{
+			// In the two-team layout the totals of the team are shown in the banner above its list
+			UpdateTeamBanner(nTeamID, localizedName, td.iPlayerCount, iPlayerCount, td.iFrags);
+			return;
 		}
 
 		V_snwprintf(wbuf, 128, L"%ls (%d/%d)", localizedName, td.iPlayerCount, iPlayerCount);
@@ -1254,6 +1348,14 @@ void CScorePanel::SetLayoutMode(bool twoTeams)
 	m_pPlayerList->SetVisible(!twoTeams);
 	m_pListLeft->SetVisible(twoTeams);
 	m_pListRight->SetVisible(twoTeams);
+	m_pBoxLeft->SetVisible(twoTeams);
+	m_pBoxRight->SetVisible(twoTeams);
+
+	if (twoTeams)
+	{
+		GetTwoLayout();
+		UpdateBannerFonts();
+	}
 
 	if (twoTeams && !m_bLayoutChanged)
 	{
@@ -1286,8 +1388,9 @@ void CScorePanel::SetLineSpacingAll(int spacing)
 bool CScorePanel::FitTwoLists(int &height)
 {
 	int x = 0, y = 0, wide = 0;
-	m_pPlayerList->GetPos(x, y); // the two lists start at the same height as the normal list
-	const int addHeight = y + m_iBottomPadding; // distance on the top and on the bottom of the lists
+	m_pPlayerList->GetPos(x, y); // the banners start where the normal list starts
+	const int listY = y + m_iTwoBannerTall + m_iTwoBannerGap;
+	const int addHeight = listY + m_iBottomPadding; // distance on the top and on the bottom of the lists
 
 	int leftTall = 0, rightTall = 0;
 	m_pListLeft->GetContentSize(wide, leftTall);
@@ -1310,9 +1413,17 @@ bool CScorePanel::FitTwoLists(int &height)
 	m_pListLeft->SetVerticalScrollbar(overflowed);
 	m_pListRight->SetVerticalScrollbar(overflowed);
 
-	const int margin = (m_iTwoPanelWide - 2 * m_iTwoListWide - m_iTwoListGap) / 2;
-	m_pListLeft->SetBounds(margin, y, m_iTwoListWide, listHeight);
-	m_pListRight->SetBounds(margin + m_iTwoListWide + m_iTwoListGap, y, m_iTwoListWide, listHeight);
+	const int leftX = m_iTwoListGap;
+	const int rightX = m_iTwoListGap + m_iTwoListWideReal + m_iTwoListGap;
+	m_pListLeft->SetBounds(leftX, listY, m_iTwoListWideReal, listHeight);
+	m_pListRight->SetBounds(rightX, listY, m_iTwoListWideReal, listHeight);
+
+	// banner + frame: from the top of the banner to the bottom of the list
+	const int boxTall = m_iTwoBannerTall + m_iTwoBannerGap + listHeight;
+	m_pBoxLeft->SetBounds(leftX, y, m_iTwoListWideReal, boxTall);
+	m_pBoxRight->SetBounds(rightX, y, m_iTwoListWideReal, boxTall);
+	AsBox(m_pBoxLeft)->SetBanner(m_iTwoBannerTall);
+	AsBox(m_pBoxRight)->SetBanner(m_iTwoBannerTall);
 
 	return overflowed;
 }
@@ -1335,53 +1446,82 @@ void CScorePanel::ResizeTwoTeams()
 		FitTwoLists(height);
 	}
 
-	SetSize(m_iTwoPanelWide, height);
+	SetSize(m_iTwoPanelWideReal, height);
 
 	// Move to center
 	int screenWide = 0, screenTall = 0;
 	vgui2::surface()->GetScreenSize(screenWide, screenTall);
-	SetPos((screenWide - m_iTwoPanelWide) / 2, (ScreenHeight - height) / 2);
+	SetPos((screenWide - m_iTwoPanelWideReal) / 2, (ScreenHeight - height) / 2);
 
 	// Player count in the top right corner
 	int labelWide = 0, labelTall = 0;
 	m_pPlayerCountLabel->GetSize(labelWide, labelTall);
-	const int margin = (m_iTwoPanelWide - 2 * m_iTwoListWide - m_iTwoListGap) / 2;
-	m_pPlayerCountLabel->SetPos(m_iTwoPanelWide - margin - labelWide, m_iPlayerCountY);
+	m_pPlayerCountLabel->SetPos(m_iTwoPanelWideReal - m_iTwoListGap - labelWide, m_iPlayerCountY);
 }
 
-// "[DZA] Abdo" -> clan "DZA", name "Abdo"
-void CScorePanel::SplitClanTag(const char *full, char *clan, int clanSize, char *name, int nameSize)
+void CScorePanel::GetTwoLayout()
 {
-	clan[0] = '\0';
+	int screenWide = 0, screenTall = 0;
+	vgui2::surface()->GetScreenSize(screenWide, screenTall);
 
-	// color codes in front of the tag
-	const char *p = full;
-	while (p[0] == '^' && p[1] >= '0' && p[1] <= '9')
-		p += 2;
+	// the panel never gets wider than the screen
+	int panelWide = m_iTwoPanelWide;
+	if (panelWide > screenWide - 16)
+		panelWide = screenWide - 16;
 
-	if (*p == '[' || *p == '(' || *p == '{')
+	const int gap = m_iTwoListGap; // between the lists and on both sides
+	const int listWide = (panelWide - 3 * gap) / 2;
+
+	m_bTwoShowSteam = hud_scoreboard_showsteamid.GetBool();
+	m_bTwoShowEff = hud_scoreboard_showeff.GetBool();
+
+	// the name column takes the rest. When it is too small, the SteamID and then the Eff column are dropped.
+	const int fixed = m_iTwoColAvatar + m_iTwoColFrags + m_iTwoColDeaths + m_iTwoColPing;
+	int nameWide = listWide - fixed
+	    - (m_bTwoShowSteam ? m_iTwoColSteamID : 0)
+	    - (m_bTwoShowEff ? m_iTwoColEff : 0);
+
+	if (nameWide < m_iTwoMinName && m_bTwoShowSteam)
 	{
-		const char close = (*p == '[') ? ']' : ((*p == '(') ? ')' : '}');
-		const char *end = strchr(p + 1, close);
-		const int len = end ? (int)(end - (p + 1)) : 0;
-
-		if (end && len > 0 && len < clanSize)
-		{
-			const char *rest = end + 1;
-			while (*rest == ' ')
-				rest++;
-
-			if (*rest) // a name must remain after the tag
-			{
-				memcpy(clan, p + 1, len);
-				clan[len] = '\0';
-				snprintf(name, nameSize, "%s", rest);
-				return;
-			}
-		}
+		m_bTwoShowSteam = false;
+		nameWide += m_iTwoColSteamID;
+	}
+	if (nameWide < m_iTwoMinName && m_bTwoShowEff)
+	{
+		m_bTwoShowEff = false;
+		nameWide += m_iTwoColEff;
 	}
 
-	snprintf(name, nameSize, "%s", full);
+	m_iTwoListWideReal = listWide;
+	m_iTwoPanelWideReal = 2 * listWide + 3 * gap;
+	m_iTwoNameWide = nameWide;
+}
+
+void CScorePanel::UpdateBannerFonts()
+{
+	// ChatFont for the names. The big score uses "ScoreBig": add it to the Fonts of ChatScheme.res
+	// (see the instructions). If it does not exist, the name font is used.
+	vgui2::IScheme *pChatScheme = vgui2::scheme()->GetIScheme(vgui2::scheme()->GetScheme("ChatScheme"));
+	m_hBannerNameFont = pChatScheme ? pChatScheme->GetFont("ChatFont") : 0;
+	m_hBannerScoreFont = pChatScheme ? pChatScheme->GetFont("ScoreBig") : 0;
+	if (!m_hBannerScoreFont)
+		m_hBannerScoreFont = m_hBannerNameFont;
+
+	AsBox(m_pBoxLeft)->SetFonts(m_hBannerNameFont, m_hBannerScoreFont);
+	AsBox(m_pBoxRight)->SetFonts(m_hBannerNameFont, m_hBannerScoreFont);
+}
+
+void CScorePanel::UpdateTeamBanner(int nTeamID, const wchar_t *name, int teamPlayers, int totalPlayers, int score)
+{
+	CTeamBox *box = AsBox(nTeamID == m_iLeftTeam ? m_pBoxLeft : m_pBoxRight);
+
+	wchar_t count[32];
+	wchar_t scoreText[16];
+	V_snwprintf(count, 32, L"%d / %d", teamPlayers, totalPlayers);
+	V_snwprintf(scoreText, 16, L"%d", score);
+
+	box->SetTeamColor(g_pViewport->GetTeamColor(nTeamID));
+	box->SetTexts(name, count, scoreText);
 }
 
 bool CScorePanel::StaticPlayerSortFuncByFrags(vgui2::SectionedListPanel *list, int itemID1, int itemID2)
