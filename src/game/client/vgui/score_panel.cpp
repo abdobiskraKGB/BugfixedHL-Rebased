@@ -32,6 +32,7 @@ ConVar hud_scoreboard_showeff("hud_scoreboard_showeff", "1", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_size("hud_scoreboard_size", "0", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_spacing_normal("hud_scoreboard_spacing_normal", "0", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_spacing_compact("hud_scoreboard_spacing_compact", "0", FCVAR_ARCHIVE);
+ConVar hud_scoreboard_twoteams("hud_scoreboard_twoteams", "1", FCVAR_ARCHIVE, "Show two teams side by side (two lists) when the match has exactly two teams");
 
 namespace
 {
@@ -161,6 +162,10 @@ CScorePanel::CScorePanel()
 	m_pImageList = new vgui2::ImageList(true);
 	m_pPlayerList->SetImageList(m_pImageList, true);
 
+	// Two-team layout: one list per team (hidden until needed)
+	m_pListLeft = CreateTeamList("PlayerListLeft");
+	m_pListRight = CreateTeamList("PlayerListRight");
+
 	for (int i = 1; i <= MAX_PLAYERS; i++)
 	{
 		CPlayerImage *pImg = new CPlayerImage();
@@ -229,6 +234,13 @@ void CScorePanel::ApplySchemeSettings(vgui2::IScheme *pScheme)
 
 	m_pPlayerList->SetBorder(pScheme->GetBorder("FrameBorder"));
 	m_pPlayerList->SetPaintBackgroundType(0);
+
+	for (vgui2::SectionedListPanel *teamList : { m_pListLeft, m_pListRight })
+	{
+		teamList->SetBorder(pScheme->GetBorder("FrameBorder"));
+		teamList->SetPaintBackgroundType(0);
+		teamList->SetBgColor(Color(0, 0, 0, 84));
+	}
 
 	m_ThisPlayerBgColor = pScheme->GetColor("ThisPlayerBgColor", Color(0, 0, 0, 0));
 	m_KillerBgColor = pScheme->GetColor("KillerBgColor", Color(0, 0, 0, 0));
@@ -369,6 +381,10 @@ void CScorePanel::RefreshItems()
 	std::fill(m_IsTeamSectionCreated.begin(), m_IsTeamSectionCreated.end(), false);
 	m_pPlayerList->RemoveAll();
 	m_pPlayerList->RemoveAllSections();
+	m_pListLeft->RemoveAll();
+	m_pListLeft->RemoveAllSections();
+	m_pListRight->RemoveAll();
+	m_pListRight->RemoveAllSections();
 
 	RestoreSize();
 
@@ -434,6 +450,17 @@ void CScorePanel::RefreshItems()
 		return ilhs > irhs;
 	});
 
+	// Exactly two real teams: show them side by side. The team with the lower number is on the left,
+	// so the sides never swap while the score changes.
+	m_bTwoTeamMode = false;
+	if (hud_scoreboard_twoteams.GetBool() && iTeamCount == 2 && m_SortedTeamIDs[0] != 0 && m_SortedTeamIDs[1] != 0)
+	{
+		m_bTwoTeamMode = true;
+		m_iLeftTeam = (m_SortedTeamIDs[0] < m_SortedTeamIDs[1]) ? m_SortedTeamIDs[0] : m_SortedTeamIDs[1];
+		m_iRightTeam = (m_SortedTeamIDs[0] < m_SortedTeamIDs[1]) ? m_SortedTeamIDs[1] : m_SortedTeamIDs[0];
+	}
+	SetLayoutMode(m_bTwoTeamMode);
+
 	// Create header before any other sections
 	CreateSection(HEADER_SECTION_ID);
 
@@ -462,22 +489,43 @@ void CScorePanel::CreateSection(int nTeamID)
 
 	m_IsTeamSectionCreated[nTeamID] = true;
 
-	char buf[128];
-	TeamData &td = m_TeamData[nTeamID];
+	if (m_bTwoTeamMode && nTeamID == HEADER_SECTION_ID)
+	{
+		// The column titles are needed on top of both lists
+		CreateSectionIn(m_pListLeft, nTeamID);
+		CreateSectionIn(m_pListRight, nTeamID);
+		return;
+	}
 
-	m_pPlayerList->AddSection(nTeamID, "", StaticPlayerSortFuncByFrags);
-	m_pPlayerList->SetSectionFgColor(nTeamID, g_pViewport->GetTeamColor(nTeamID));
+	CreateSectionIn(ListForTeam(nTeamID), nTeamID);
+}
+
+void CScorePanel::CreateSectionIn(vgui2::SectionedListPanel *list, int nTeamID)
+{
+	// true for the two lists of the two-team layout (compact columns, clan column)
+	const bool two = (list != m_pPlayerList);
+
+	list->AddSection(nTeamID, "", StaticPlayerSortFuncByFrags);
+	list->SetSectionFgColor(nTeamID, g_pViewport->GetTeamColor(nTeamID));
 
 	if (nTeamID == HEADER_SECTION_ID)
 	{
-		m_pPlayerList->SetSectionAlwaysVisible(nTeamID);
-		m_pPlayerList->SetSectionDividerColor(nTeamID, Color(0, 0, 0, 0));
+		list->SetSectionAlwaysVisible(nTeamID);
+		list->SetSectionDividerColor(nTeamID, Color(0, 0, 0, 0));
 	}
 
 	// Avatar
-	m_pPlayerList->AddColumnToSection(nTeamID, "avatar", "",
+	list->AddColumnToSection(nTeamID, "avatar", "",
 	    vgui2::SectionedListPanel::COLUMN_IMAGE | vgui2::SectionedListPanel::COLUMN_CENTER,
-	    m_iColumnWidthAvatar);
+	    two ? m_iTwoColAvatar : m_iColumnWidthAvatar);
+
+	// Clan tag (two-team layout only)
+	if (two)
+	{
+		list->AddColumnToSection(nTeamID, "clan", nTeamID == HEADER_SECTION_ID ? "Clan" : "",
+		    vgui2::SectionedListPanel::COLUMN_BRIGHT,
+		    m_iTwoColClan);
+	}
 
 	// Name
 	const char *nameCol;
@@ -487,35 +535,35 @@ void CScorePanel::CreateSection(int nTeamID)
 	else
 		nameCol = "??? (?/?)";
 
-	m_pPlayerList->AddColumnToSection(nTeamID, "name", nameCol,
+	list->AddColumnToSection(nTeamID, "name", nameCol,
 	    vgui2::SectionedListPanel::COLUMN_BRIGHT | (gHUD.GetColorCodeAction() == ColorCodeAction::Handle ? vgui2::SectionedListPanel::COLUMN_COLORED : 0),
-	    GetNameColumnWidth());
+	    two ? m_iTwoColName : GetNameColumnWidth());
 
-	// SteamID
-	if (hud_scoreboard_showsteamid.GetBool())
+	// SteamID (normal layout only)
+	if (!two && hud_scoreboard_showsteamid.GetBool())
 	{
-		m_pPlayerList->AddColumnToSection(nTeamID, "steamid", nTeamID == HEADER_SECTION_ID ? "#BHL_Scores_ColSteamID" : "",
+		list->AddColumnToSection(nTeamID, "steamid", nTeamID == HEADER_SECTION_ID ? "#BHL_Scores_ColSteamID" : "",
 		    vgui2::SectionedListPanel::COLUMN_BRIGHT,
 		    m_iColumnWidthSteamID);
 	}
 
-	// Efficiency
-	if (hud_scoreboard_showeff.GetBool())
+	// Efficiency (normal layout only)
+	if (!two && hud_scoreboard_showeff.GetBool())
 	{
-		m_pPlayerList->AddColumnToSection(nTeamID, "eff", nTeamID == HEADER_SECTION_ID ? "#BHL_Scores_ColEff" : "???",
+		list->AddColumnToSection(nTeamID, "eff", nTeamID == HEADER_SECTION_ID ? "#BHL_Scores_ColEff" : "???",
 		    vgui2::SectionedListPanel::COLUMN_BRIGHT,
 		    m_iColumnWidthEff);
 	}
 
 	// Frags
-	m_pPlayerList->AddColumnToSection(nTeamID, "frags", nTeamID == HEADER_SECTION_ID ? "#PlayerScore" : "???",
+	list->AddColumnToSection(nTeamID, "frags", nTeamID == HEADER_SECTION_ID ? "#PlayerScore" : "???",
 	    vgui2::SectionedListPanel::COLUMN_BRIGHT,
-	    m_iColumnWidthFrags);
+	    two ? m_iTwoColFrags : m_iColumnWidthFrags);
 
 	// Deaths
-	m_pPlayerList->AddColumnToSection(nTeamID, "deaths", nTeamID == HEADER_SECTION_ID ? "#PlayerDeath" : "???",
+	list->AddColumnToSection(nTeamID, "deaths", nTeamID == HEADER_SECTION_ID ? "#PlayerDeath" : "???",
 	    vgui2::SectionedListPanel::COLUMN_BRIGHT,
-	    m_iColumnWidthDeaths);
+	    two ? m_iTwoColDeaths : m_iColumnWidthDeaths);
 
 	// Ping
 	const char *pingLabel;
@@ -525,9 +573,9 @@ void CScorePanel::CreateSection(int nTeamID)
 	else
 		pingLabel = "";
 
-	m_pPlayerList->AddColumnToSection(nTeamID, "ping", pingLabel,
+	list->AddColumnToSection(nTeamID, "ping", pingLabel,
 	    vgui2::SectionedListPanel::COLUMN_BRIGHT,
-	    m_iColumnWidthPing);
+	    two ? m_iTwoColPing : m_iColumnWidthPing);
 }
 
 void CScorePanel::UpdateAllClients()
@@ -553,8 +601,8 @@ void CScorePanel::UpdateClientInfo(int client)
 		// Player just connected
 		pd.bIsConnected = true;
 
-		if (pd.nItemID != -1 && m_pPlayerList->IsItemIDValid(pd.nItemID))
-			m_pPlayerList->RemoveItem(pd.nItemID);
+		if (pd.nItemID != -1 && ListForTeam(pd.nTeamID)->IsItemIDValid(pd.nItemID))
+			ListForTeam(pd.nTeamID)->RemoveItem(pd.nItemID);
 
 		pd.nItemID = -1;
 		pd.nTeamID = pi->GetTeamNumber();
@@ -564,7 +612,7 @@ void CScorePanel::UpdateClientInfo(int client)
 		// Player disconnected
 		pd.bIsConnected = false;
 
-		m_pPlayerList->RemoveItem(pd.nItemID);
+		ListForTeam(pd.nTeamID)->RemoveItem(pd.nItemID);
 		pd.nItemID = -1;
 		pd.nTeamID = 0;
 	}
@@ -578,7 +626,7 @@ void CScorePanel::UpdateClientInfo(int client)
 	if (GetPlayerTeam(pi) != pd.nTeamID)
 	{
 		// Player changed team
-		m_pPlayerList->RemoveItem(pd.nItemID);
+		ListForTeam(pd.nTeamID)->RemoveItem(pd.nItemID);
 		pd.nItemID = -1;
 		pd.nTeamID = pi->GetTeamNumber();
 	}
@@ -611,7 +659,19 @@ void CScorePanel::UpdateClientInfo(int client)
 		{
 			snprintf(buf, sizeof(buf), "%s", pi->GetDisplayName(gHUD.GetColorCodeAction() == ColorCodeAction::Strip));
 		}
-		playerKv->SetString("name", buf);
+		if (m_bTwoTeamMode)
+		{
+			// the clan tag has its own column in the two-team layout
+			char clan[16];
+			char nameOnly[128];
+			SplitClanTag(buf, clan, sizeof(clan), nameOnly, sizeof(nameOnly));
+			playerKv->SetString("clan", clan);
+			playerKv->SetString("name", nameOnly);
+		}
+		else
+		{
+			playerKv->SetString("name", buf);
+		}
 
 		// SteamID
 		playerKv->SetString("steamid", pi->GetSteamID());
@@ -640,20 +700,22 @@ void CScorePanel::UpdateClientInfo(int client)
 		}
 	}
 
+	vgui2::SectionedListPanel *list = ListForTeam(pd.nTeamID);
+
 	if (pd.nItemID == -1)
 	{
 		// Create player's row
-		pd.nItemID = m_pPlayerList->AddItem(pd.nTeamID, playerKv);
-		m_pPlayerList->SetItemFgColor(pd.nItemID, gHUD.GetClientColor(client, NoTeamColor::White));
-		m_pPlayerList->InvalidateLayout();
+		pd.nItemID = list->AddItem(pd.nTeamID, playerKv);
+		list->SetItemFgColor(pd.nItemID, gHUD.GetClientColor(client, NoTeamColor::White));
+		list->InvalidateLayout();
 	}
 	else
 	{
 		// Update player's row
-		m_pPlayerList->ModifyItem(pd.nItemID, pd.nTeamID, playerKv);
+		list->ModifyItem(pd.nItemID, pd.nTeamID, playerKv);
 	}
 
-	m_pPlayerList->SetItemBgColor(pd.nItemID, GetPlayerBgColor(pi));
+	list->SetItemBgColor(pd.nItemID, GetPlayerBgColor(pi));
 
 	playerKv->deleteThis();
 }
@@ -748,7 +810,7 @@ void CScorePanel::UpdateScoresAndCounts()
 		}
 
 		V_snwprintf(wbuf, 128, L"%ls (%d/%d)", localizedName, td.iPlayerCount, iPlayerCount);
-		m_pPlayerList->ModifyColumn(nTeamID, "name", wbuf);
+		ListForTeam(nTeamID)->ModifyColumn(nTeamID, "name", wbuf);
 
 		// Team efficiency
 		float eff = CalculateEfficiency(td.iFrags, td.iDeaths);
@@ -757,17 +819,17 @@ void CScorePanel::UpdateScoresAndCounts()
 		else
 			snprintf(buf, sizeof(buf), "%.2f", eff);
 		g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
-		m_pPlayerList->ModifyColumn(nTeamID, "eff", wbuf);
+		ListForTeam(nTeamID)->ModifyColumn(nTeamID, "eff", wbuf);
 
 		// Team frags
 		snprintf(buf, sizeof(buf), "%d", td.iFrags);
 		g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
-		m_pPlayerList->ModifyColumn(nTeamID, "frags", wbuf);
+		ListForTeam(nTeamID)->ModifyColumn(nTeamID, "frags", wbuf);
 
 		// Team deaths
 		snprintf(buf, sizeof(buf), "%d", td.iDeaths);
 		g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
-		m_pPlayerList->ModifyColumn(nTeamID, "deaths", wbuf);
+		ListForTeam(nTeamID)->ModifyColumn(nTeamID, "deaths", wbuf);
 	};
 
 	// Update team score and player count
@@ -882,7 +944,7 @@ float CScorePanel::CalculateEfficiency(int kills, int deaths)
 
 int CScorePanel::GetClientIconSize()
 {
-	return clamp(m_pPlayerList->GetLineSpacing() - 2, 0, 32);
+	return clamp(ActiveList()->GetLineSpacing() - 2, 0, 32);
 }
 
 void CScorePanel::CreatePlayerMenu()
@@ -909,7 +971,10 @@ void CScorePanel::OpenPlayerMenu(int itemID)
 	// Set menu info
 	m_MenuData.nItemID = itemID;
 	m_MenuData.nClient = 0;
-	KeyValues *kv = m_pPlayerList->GetItemData(itemID);
+	vgui2::SectionedListPanel *menuList = m_pPlayerList;
+	if (m_bTwoTeamMode)
+		menuList = m_pListRight->IsCursorOver() ? m_pListRight : m_pListLeft; // the list that was clicked
+	KeyValues *kv = menuList->GetItemData(itemID);
 	if (!kv)
 		return;
 	m_MenuData.nClient = kv->GetInt("client", 0);
@@ -1082,13 +1147,19 @@ int CScorePanel::GetLineSpacingForCompact()
 void CScorePanel::RestoreSize()
 {
 	if (GetSizeMode() == SizeMode::Compact)
-		m_pPlayerList->SetLineSpacingOverride(GetLineSpacingForCompact());
+		SetLineSpacingAll(GetLineSpacingForCompact());
 	else
-		m_pPlayerList->SetLineSpacingOverride(GetLineSpacingForNormal());
+		SetLineSpacingAll(GetLineSpacingForNormal());
 }
 
 void CScorePanel::Resize()
 {
+	if (m_bTwoTeamMode)
+	{
+		ResizeTwoTeams();
+		return;
+	}
+
 	SizeMode mode = GetSizeMode();
 
 	// Returns true if scrollbar was enabled
@@ -1148,6 +1219,169 @@ void CScorePanel::Resize()
 	GetPos(x, y);
 	y = (ScreenHeight - height) / 2;
 	SetPos(x, y);
+}
+
+vgui2::SectionedListPanel *CScorePanel::CreateTeamList(const char *name)
+{
+	vgui2::SectionedListPanel *list = new vgui2::SectionedListPanel(this, name);
+	list->SetMouseInputEnabled(true);
+	list->SetVerticalScrollbar(false);
+	list->SetImageList(m_pImageList, false); // the image list is shared and owned by the first list
+	list->AddActionSignalTarget(this);
+	list->SetVisible(false);
+	return list;
+}
+
+vgui2::SectionedListPanel *CScorePanel::ListForTeam(int nTeamID)
+{
+	if (!m_bTwoTeamMode)
+		return m_pPlayerList;
+
+	// spectators are listed under the left team
+	if (nTeamID == m_iLeftTeam || nTeamID == TEAM_SPECTATOR)
+		return m_pListLeft;
+
+	return m_pListRight;
+}
+
+vgui2::SectionedListPanel *CScorePanel::ActiveList()
+{
+	return m_bTwoTeamMode ? m_pListLeft : m_pPlayerList;
+}
+
+void CScorePanel::SetLayoutMode(bool twoTeams)
+{
+	m_pPlayerList->SetVisible(!twoTeams);
+	m_pListLeft->SetVisible(twoTeams);
+	m_pListRight->SetVisible(twoTeams);
+
+	if (twoTeams && !m_bLayoutChanged)
+	{
+		// Remember the normal layout, to restore it when the match has no longer two teams
+		int dummy = 0;
+		GetPos(m_iNormalPanelX, dummy);
+		GetSize(m_iNormalPanelWide, dummy);
+		m_pPlayerCountLabel->GetPos(m_iPlayerCountX, m_iPlayerCountY);
+		m_bLayoutChanged = true;
+	}
+	else if (!twoTeams && m_bLayoutChanged)
+	{
+		int x = 0, y = 0, wide = 0, tall = 0;
+		GetPos(x, y);
+		GetSize(wide, tall);
+		SetPos(m_iNormalPanelX, y);
+		SetSize(m_iNormalPanelWide, tall);
+		m_pPlayerCountLabel->SetPos(m_iPlayerCountX, m_iPlayerCountY);
+		m_bLayoutChanged = false;
+	}
+}
+
+void CScorePanel::SetLineSpacingAll(int spacing)
+{
+	m_pPlayerList->SetLineSpacingOverride(spacing);
+	m_pListLeft->SetLineSpacingOverride(spacing);
+	m_pListRight->SetLineSpacingOverride(spacing);
+}
+
+bool CScorePanel::FitTwoLists(int &height)
+{
+	int x = 0, y = 0, wide = 0;
+	m_pPlayerList->GetPos(x, y); // the two lists start at the same height as the normal list
+	const int addHeight = y + m_iBottomPadding; // distance on the top and on the bottom of the lists
+
+	int leftTall = 0, rightTall = 0;
+	m_pListLeft->GetContentSize(wide, leftTall);
+	m_pListRight->GetContentSize(wide, rightTall);
+
+	int listHeight = (leftTall > rightTall) ? leftTall : rightTall;
+	if (listHeight < m_iMinHeight)
+		listHeight = m_iMinHeight;
+	height = addHeight + listHeight;
+
+	bool overflowed = false;
+	if (ScreenHeight - height < m_iVerticalMargin * 2)
+	{
+		// It didn't fit
+		height = ScreenHeight - m_iVerticalMargin * 2;
+		listHeight = height - addHeight;
+		overflowed = true;
+	}
+
+	m_pListLeft->SetVerticalScrollbar(overflowed);
+	m_pListRight->SetVerticalScrollbar(overflowed);
+
+	const int margin = (m_iTwoPanelWide - 2 * m_iTwoListWide - m_iTwoListGap) / 2;
+	m_pListLeft->SetBounds(margin, y, m_iTwoListWide, listHeight);
+	m_pListRight->SetBounds(margin + m_iTwoListWide + m_iTwoListGap, y, m_iTwoListWide, listHeight);
+
+	return overflowed;
+}
+
+void CScorePanel::ResizeTwoTeams()
+{
+	int height = 0;
+	if (FitTwoLists(height) && GetSizeMode() == SizeMode::Auto)
+	{
+		// Content overflowed, scrollbars are now visible. Set compact line spacing
+		SetLineSpacingAll(GetLineSpacingForCompact());
+
+		// Refresh player info to update avatar sizes
+		for (int i = 1; i <= MAX_PLAYERS; i++)
+		{
+			UpdateClientInfo(i);
+		}
+
+		// Resize again
+		FitTwoLists(height);
+	}
+
+	SetSize(m_iTwoPanelWide, height);
+
+	// Move to center
+	int screenWide = 0, screenTall = 0;
+	vgui2::surface()->GetScreenSize(screenWide, screenTall);
+	SetPos((screenWide - m_iTwoPanelWide) / 2, (ScreenHeight - height) / 2);
+
+	// Player count in the top right corner
+	int labelWide = 0, labelTall = 0;
+	m_pPlayerCountLabel->GetSize(labelWide, labelTall);
+	const int margin = (m_iTwoPanelWide - 2 * m_iTwoListWide - m_iTwoListGap) / 2;
+	m_pPlayerCountLabel->SetPos(m_iTwoPanelWide - margin - labelWide, m_iPlayerCountY);
+}
+
+// "[DZA] Abdo" -> clan "DZA", name "Abdo"
+void CScorePanel::SplitClanTag(const char *full, char *clan, int clanSize, char *name, int nameSize)
+{
+	clan[0] = '\0';
+
+	// color codes in front of the tag
+	const char *p = full;
+	while (p[0] == '^' && p[1] >= '0' && p[1] <= '9')
+		p += 2;
+
+	if (*p == '[' || *p == '(' || *p == '{')
+	{
+		const char close = (*p == '[') ? ']' : ((*p == '(') ? ')' : '}');
+		const char *end = strchr(p + 1, close);
+		const int len = end ? (int)(end - (p + 1)) : 0;
+
+		if (end && len > 0 && len < clanSize)
+		{
+			const char *rest = end + 1;
+			while (*rest == ' ')
+				rest++;
+
+			if (*rest) // a name must remain after the tag
+			{
+				memcpy(clan, p + 1, len);
+				clan[len] = '\0';
+				snprintf(name, nameSize, "%s", rest);
+				return;
+			}
+		}
+	}
+
+	snprintf(name, nameSize, "%s", full);
 }
 
 bool CScorePanel::StaticPlayerSortFuncByFrags(vgui2::SectionedListPanel *list, int itemID1, int itemID2)
