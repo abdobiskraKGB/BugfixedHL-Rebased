@@ -100,6 +100,7 @@ private:
 		bool bIsConnected = false;
 		int nItemID = -1;
 		int nTeamID = 0;
+		int nSpecSide = -1; // two-team layout: spectators are shared between the lists, 0 = left, 1 = right
 	};
 
 	struct MenuData
@@ -135,6 +136,10 @@ private:
 	int m_iTwoPanelWideReal = 0; // real sizes used by the two-team layout
 	int m_iTwoListWideReal = 0;
 	int m_iTwoNameWide = 0;
+	vgui2::HFont m_hBannerTeamFont = 0; // name of the team in the banner
+	vgui2::HFont m_hRowFont = 0;        // names of the players in the two-team layout (0 = default font)
+	int m_iSpecCount[2] = { 0, 0 };     // spectators shown in the left / right list
+	bool m_bSpecSectionCreated[2] = { false, false };
 	bool m_bTwoTeamMode = false;
 	int m_iLeftTeam = 0;
 	int m_iRightTeam = 0;
@@ -188,6 +193,13 @@ private:
 	CPanelAnimationVarAliasType(int, m_iTwoMinName, "two_min_name", "80", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iTwoBannerTall, "two_banner_tall", "44", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iTwoBannerGap, "two_banner_gap", "4", "proportional_int");
+
+	// Pictures of the teams, shown in their banners (by team number). Add the keys to ScorePanel.res, like muted_icon:
+	//   "team_image_1"  "ui/gfx/team1"
+	CPanelAnimationVarAliasType(int, m_iTeamImage1, "team_image_1", "ui/gfx/muted_icon32", "textureid");
+	CPanelAnimationVarAliasType(int, m_iTeamImage2, "team_image_2", "ui/gfx/muted_icon32", "textureid");
+	CPanelAnimationVarAliasType(int, m_iTeamImage3, "team_image_3", "ui/gfx/muted_icon32", "textureid");
+	CPanelAnimationVarAliasType(int, m_iTeamImage4, "team_image_4", "ui/gfx/muted_icon32", "textureid");
 
 	/**
 	 * Updates all labels, recreates all sections, recalculates all data.
@@ -346,6 +358,26 @@ private:
 	 * Computes the widths of the two-team layout for the current screen.
 	 */
 	void GetTwoLayout();
+
+	/**
+	 * Returns the list that shows the row of the player (spectators are shared between the two lists).
+	 */
+	vgui2::SectionedListPanel *ListForPlayer(int client);
+
+	/**
+	 * Removes the row of the player from its list.
+	 */
+	void RemoveRow(int client);
+
+	/**
+	 * Creates the spectators section in the left (0) or right (1) list.
+	 */
+	void EnsureSpectatorSection(int side);
+
+	/**
+	 * Returns the picture of the team (texture id), -1 if it has none.
+	 */
+	int GetTeamImage(int nTeamID);
 
 	/**
 	 * Gets the banner fonts from the chat scheme.

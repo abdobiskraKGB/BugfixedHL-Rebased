@@ -129,8 +129,22 @@ private:
 	bool m_bIsMuted = false;
 };
 
-// The colored box behind the list of a team: a banner with the name of the team, the number of
-// players and the score (big, on the right), and a frame around the banner and the list.
+// SectionedListPanel::SetItemFont exists in the original Source SDK. If this vgui2 does not have it,
+// the call is skipped and the default font is used.
+template <class L>
+auto SetItemFontIfAvailable(L *list, int itemID, vgui2::HFont font, int) -> decltype(list->SetItemFont(itemID, font), void())
+{
+	list->SetItemFont(itemID, font);
+}
+
+template <class L>
+void SetItemFontIfAvailable(L *, int, vgui2::HFont, long)
+{
+}
+
+// The colored box behind the list of a team: a banner with the picture of the team, its name, the
+// number of players and the score (big), and a frame around the banner and the list.
+// The box of the right team is mirrored, so the two scores are side by side in the middle.
 class CTeamBox : public vgui2::Panel
 {
 	typedef vgui2::Panel BaseClass;
@@ -143,23 +157,32 @@ public:
 		SetKeyBoardInputEnabled(false);
 		SetPaintBackgroundEnabled(false);
 
-		m_pName = CreateLabel("BoxName", vgui2::Label::a_west);
-		m_pCount = CreateLabel("BoxCount", vgui2::Label::a_west);
-		m_pScore = CreateLabel("BoxScore", vgui2::Label::a_east);
+		m_pName = CreateLabel("BoxName");
+		m_pCount = CreateLabel("BoxCount");
+		m_pScore = CreateLabel("BoxScore");
+		ApplyAlignment();
 	}
 
-	void SetFonts(vgui2::HFont nameFont, vgui2::HFont scoreFont)
+	void SetFonts(vgui2::HFont teamFont, vgui2::HFont countFont, vgui2::HFont scoreFont)
 	{
-		if (nameFont)
-		{
-			m_pName->SetFont(nameFont);
-			m_pCount->SetFont(nameFont);
-		}
+		if (teamFont)
+			m_pName->SetFont(teamFont);
+		if (countFont)
+			m_pCount->SetFont(countFont);
 		if (scoreFont)
 			m_pScore->SetFont(scoreFont);
 	}
 
+	void SetMirrored(bool mirrored)
+	{
+		m_bMirrored = mirrored;
+		ApplyAlignment();
+	}
+
 	void SetTeamColor(Color color) { m_Color = color; }
+
+	// texture id of the picture of the team, -1 = no picture
+	void SetImage(int textureId) { m_iImage = textureId; }
 
 	void SetTexts(const wchar_t *name, const wchar_t *count, const wchar_t *score)
 	{
@@ -168,18 +191,38 @@ public:
 		m_pScore->SetText(score);
 	}
 
-	// Places the banner labels. bannerTall = height of the banner, in pixels.
+	// Places the picture and the labels. bannerTall = height of the banner, in pixels.
 	void SetBanner(int bannerTall)
 	{
 		m_iBannerTall = bannerTall;
 
 		int wide = 0, tall = 0;
 		GetSize(wide, tall);
+
 		const int pad = bannerTall / 5;
 		const int scoreWide = wide / 3;
-		m_pName->SetBounds(pad, 0, wide - scoreWide - pad, bannerTall / 2 + pad / 2);
-		m_pCount->SetBounds(pad, bannerTall / 2, wide - scoreWide - pad, bannerTall / 2);
-		m_pScore->SetBounds(wide - scoreWide - pad, 0, scoreWide, bannerTall);
+
+		// the picture is a square
+		m_iImageSize = (m_iImage != -1) ? (bannerTall - pad) : 0;
+		const int imageSpace = m_iImageSize ? (m_iImageSize + pad) : 0;
+
+		const int nameWide = wide - scoreWide - 2 * pad - imageSpace;
+		const int nameTall = bannerTall * 3 / 5;
+
+		if (!m_bMirrored)
+		{
+			m_iImageX = pad;
+			m_pName->SetBounds(pad + imageSpace, 0, nameWide, nameTall);
+			m_pCount->SetBounds(pad + imageSpace, nameTall, nameWide, bannerTall - nameTall);
+			m_pScore->SetBounds(wide - scoreWide - pad, 0, scoreWide, bannerTall);
+		}
+		else
+		{
+			m_iImageX = wide - pad - m_iImageSize;
+			m_pScore->SetBounds(pad, 0, scoreWide, bannerTall);
+			m_pName->SetBounds(wide - pad - imageSpace - nameWide, 0, nameWide, nameTall);
+			m_pCount->SetBounds(wide - pad - imageSpace - nameWide, nameTall, nameWide, bannerTall - nameTall);
+		}
 	}
 
 	virtual void Paint() override
@@ -191,6 +234,15 @@ public:
 		vgui2::surface()->DrawSetColor(m_Color.r(), m_Color.g(), m_Color.b(), 80);
 		vgui2::surface()->DrawFilledRect(0, 0, wide, m_iBannerTall);
 
+		// picture of the team
+		if (m_iImage != -1 && m_iImageSize > 0)
+		{
+			const int y = (m_iBannerTall - m_iImageSize) / 2;
+			vgui2::surface()->DrawSetColor(255, 255, 255, 255);
+			vgui2::surface()->DrawSetTexture(m_iImage);
+			vgui2::surface()->DrawTexturedRect(m_iImageX, y, m_iImageX + m_iImageSize, y + m_iImageSize);
+		}
+
 		// frame around the banner and the list
 		vgui2::surface()->DrawSetColor(m_Color.r(), m_Color.g(), m_Color.b(), 200);
 		vgui2::surface()->DrawFilledRect(0, 0, wide, 1);
@@ -201,19 +253,29 @@ public:
 	}
 
 private:
-	vgui2::Label *CreateLabel(const char *name, vgui2::Label::Alignment align)
+	vgui2::Label *CreateLabel(const char *name)
 	{
 		vgui2::Label *label = new vgui2::Label(this, name, "");
 		label->SetPaintBackgroundEnabled(false);
-		label->SetContentAlignment(align);
 		label->SetFgColor(Color(255, 255, 255, 255));
 		return label;
+	}
+
+	void ApplyAlignment()
+	{
+		m_pName->SetContentAlignment(m_bMirrored ? vgui2::Label::a_east : vgui2::Label::a_west);
+		m_pCount->SetContentAlignment(m_bMirrored ? vgui2::Label::a_east : vgui2::Label::a_west);
+		m_pScore->SetContentAlignment(m_bMirrored ? vgui2::Label::a_west : vgui2::Label::a_east);
 	}
 
 	vgui2::Label *m_pName = nullptr;
 	vgui2::Label *m_pCount = nullptr;
 	vgui2::Label *m_pScore = nullptr;
 	Color m_Color = Color(255, 255, 255, 255);
+	bool m_bMirrored = false;
+	int m_iImage = -1;
+	int m_iImageX = 0;
+	int m_iImageSize = 0;
 	int m_iBannerTall = 0;
 };
 
@@ -264,6 +326,7 @@ CScorePanel::CScorePanel()
 	m_pBoxLeft->SetVisible(false);
 	m_pBoxRight = new CTeamBox(this, "BoxRight");
 	m_pBoxRight->SetVisible(false);
+	AsBox(m_pBoxRight)->SetMirrored(true); // the scores of both teams meet in the middle
 
 	for (int i = 1; i <= MAX_PLAYERS; i++)
 	{
@@ -273,6 +336,7 @@ CScorePanel::CScorePanel()
 	}
 
 	m_iMutedIconTexture = -1;
+	m_iTeamImage1 = m_iTeamImage2 = m_iTeamImage3 = m_iTeamImage4 = -1; // no pictures unless ScorePanel.res has them
 
 	CreatePlayerMenu();
 
@@ -480,6 +544,8 @@ void CScorePanel::RefreshItems()
 	std::fill(m_TeamData.begin(), m_TeamData.end(), TeamData());
 	std::fill(m_PlayerData.begin(), m_PlayerData.end(), PlayerData());
 	std::fill(m_IsTeamSectionCreated.begin(), m_IsTeamSectionCreated.end(), false);
+	m_iSpecCount[0] = m_iSpecCount[1] = 0;
+	m_bSpecSectionCreated[0] = m_bSpecSectionCreated[1] = false;
 	m_pPlayerList->RemoveAll();
 	m_pPlayerList->RemoveAllSections();
 	m_pListLeft->RemoveAll();
@@ -574,8 +640,9 @@ void CScorePanel::RefreshItems()
 		}
 	}
 
-	// Create last section for spectators
-	if (m_TeamData[TEAM_SPECTATOR].iPlayerCount > 0)
+	// Create last section for spectators. In the two-team layout the spectators are shared between
+	// the two lists and their sections are created when the first spectator of each list is added.
+	if (!m_bTwoTeamMode && m_TeamData[TEAM_SPECTATOR].iPlayerCount > 0)
 	{
 		CreateSection(TEAM_SPECTATOR);
 	}
@@ -700,19 +767,16 @@ void CScorePanel::UpdateClientInfo(int client)
 		// Player just connected
 		pd.bIsConnected = true;
 
-		if (pd.nItemID != -1 && ListForTeam(pd.nTeamID)->IsItemIDValid(pd.nItemID))
-			ListForTeam(pd.nTeamID)->RemoveItem(pd.nItemID);
+		RemoveRow(client);
 
-		pd.nItemID = -1;
-		pd.nTeamID = pi->GetTeamNumber();
+		pd.nTeamID = GetPlayerTeam(pi);
 	}
 	else if (!pi->IsConnected() && pd.bIsConnected)
 	{
 		// Player disconnected
 		pd.bIsConnected = false;
 
-		ListForTeam(pd.nTeamID)->RemoveItem(pd.nItemID);
-		pd.nItemID = -1;
+		RemoveRow(client);
 		pd.nTeamID = 0;
 	}
 
@@ -725,13 +789,25 @@ void CScorePanel::UpdateClientInfo(int client)
 	if (GetPlayerTeam(pi) != pd.nTeamID)
 	{
 		// Player changed team
-		ListForTeam(pd.nTeamID)->RemoveItem(pd.nItemID);
-		pd.nItemID = -1;
-		pd.nTeamID = pi->GetTeamNumber();
+		RemoveRow(client);
+		pd.nTeamID = GetPlayerTeam(pi);
 	}
 
 	// Create section for player's team if need to
-	CreateSection(pd.nTeamID);
+	if (m_bTwoTeamMode && pd.nTeamID == TEAM_SPECTATOR)
+	{
+		// Spectators are shared between the two lists, each new one goes to the list that has fewer
+		if (pd.nSpecSide == -1)
+		{
+			pd.nSpecSide = (m_iSpecCount[1] < m_iSpecCount[0]) ? 1 : 0;
+			m_iSpecCount[pd.nSpecSide]++;
+		}
+		EnsureSpectatorSection(pd.nSpecSide);
+	}
+	else
+	{
+		CreateSection(pd.nTeamID);
+	}
 
 	KeyValues *playerKv = new KeyValues("data");
 
@@ -787,7 +863,7 @@ void CScorePanel::UpdateClientInfo(int client)
 		}
 	}
 
-	vgui2::SectionedListPanel *list = ListForTeam(pd.nTeamID);
+	vgui2::SectionedListPanel *list = ListForPlayer(client);
 
 	if (pd.nItemID == -1)
 	{
@@ -801,6 +877,9 @@ void CScorePanel::UpdateClientInfo(int client)
 		// Update player's row
 		list->ModifyItem(pd.nItemID, pd.nTeamID, playerKv);
 	}
+
+	if (m_bTwoTeamMode && m_hRowFont)
+		SetItemFontIfAvailable(list, pd.nItemID, m_hRowFont, 0);
 
 	list->SetItemBgColor(pd.nItemID, GetPlayerBgColor(pi));
 
@@ -903,27 +982,40 @@ void CScorePanel::UpdateScoresAndCounts()
 			return;
 		}
 
-		V_snwprintf(wbuf, 128, L"%ls (%d/%d)", localizedName, td.iPlayerCount, iPlayerCount);
-		ListForTeam(nTeamID)->ModifyColumn(nTeamID, "name", wbuf);
+		// Lists that show this section: both lists for the spectators of the two-team layout
+		const bool shared = m_bTwoTeamMode && nTeamID == TEAM_SPECTATOR;
+		vgui2::SectionedListPanel *lists[2] = { ListForTeam(nTeamID), shared ? m_pListRight : nullptr };
 
 		// Team efficiency
 		float eff = CalculateEfficiency(td.iFrags, td.iDeaths);
-		if (hud_scoreboard_effpercent.GetBool())
-			snprintf(buf, sizeof(buf), "%.0f%%", eff * 100.0);
-		else
-			snprintf(buf, sizeof(buf), "%.2f", eff);
-		g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
-		ListForTeam(nTeamID)->ModifyColumn(nTeamID, "eff", wbuf);
 
-		// Team frags
-		snprintf(buf, sizeof(buf), "%d", td.iFrags);
-		g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
-		ListForTeam(nTeamID)->ModifyColumn(nTeamID, "frags", wbuf);
+		for (int k = 0; k < 2; k++)
+		{
+			if (!lists[k])
+				continue;
 
-		// Team deaths
-		snprintf(buf, sizeof(buf), "%d", td.iDeaths);
-		g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
-		ListForTeam(nTeamID)->ModifyColumn(nTeamID, "deaths", wbuf);
+			// Team name and player count
+			const int count = shared ? m_iSpecCount[k] : td.iPlayerCount;
+			V_snwprintf(wbuf, 128, L"%ls (%d/%d)", localizedName, count, iPlayerCount);
+			lists[k]->ModifyColumn(nTeamID, "name", wbuf);
+
+			if (hud_scoreboard_effpercent.GetBool())
+				snprintf(buf, sizeof(buf), "%.0f%%", eff * 100.0);
+			else
+				snprintf(buf, sizeof(buf), "%.2f", eff);
+			g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
+			lists[k]->ModifyColumn(nTeamID, "eff", wbuf);
+
+			// Team frags
+			snprintf(buf, sizeof(buf), "%d", td.iFrags);
+			g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
+			lists[k]->ModifyColumn(nTeamID, "frags", wbuf);
+
+			// Team deaths
+			snprintf(buf, sizeof(buf), "%d", td.iDeaths);
+			g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
+			lists[k]->ModifyColumn(nTeamID, "deaths", wbuf);
+		}
 	};
 
 	// Update team score and player count
@@ -1376,6 +1468,9 @@ void CScorePanel::SetLayoutMode(bool twoTeams)
 		m_pPlayerCountLabel->SetPos(m_iPlayerCountX, m_iPlayerCountY);
 		m_bLayoutChanged = false;
 	}
+
+	// the line spacing depends on the layout (the bigger name font needs taller rows)
+	RestoreSize();
 }
 
 void CScorePanel::SetLineSpacingAll(int spacing)
@@ -1383,6 +1478,17 @@ void CScorePanel::SetLineSpacingAll(int spacing)
 	m_pPlayerList->SetLineSpacingOverride(spacing);
 	m_pListLeft->SetLineSpacingOverride(spacing);
 	m_pListRight->SetLineSpacingOverride(spacing);
+
+	// A bigger font for the names needs taller rows (only when the spacing is automatic)
+	if (spacing == 0 && m_bTwoTeamMode && m_hRowFont)
+	{
+		const int need = vgui2::surface()->GetFontTall(m_hRowFont) + 6;
+		if (m_pListLeft->GetLineSpacing() < need)
+		{
+			m_pListLeft->SetLineSpacingOverride(need);
+			m_pListRight->SetLineSpacingOverride(need);
+		}
+	}
 }
 
 bool CScorePanel::FitTwoLists(int &height)
@@ -1431,7 +1537,8 @@ bool CScorePanel::FitTwoLists(int &height)
 void CScorePanel::ResizeTwoTeams()
 {
 	int height = 0;
-	if (FitTwoLists(height) && GetSizeMode() == SizeMode::Auto)
+	// (with a bigger name font the rows are not made smaller: the lists scroll instead)
+	if (FitTwoLists(height) && GetSizeMode() == SizeMode::Auto && !m_hRowFont)
 	{
 		// Content overflowed, scrollbars are now visible. Set compact line spacing
 		SetLineSpacingAll(GetLineSpacingForCompact());
@@ -1499,16 +1606,25 @@ void CScorePanel::GetTwoLayout()
 
 void CScorePanel::UpdateBannerFonts()
 {
-	// ChatFont for the names. The big score uses "ScoreBig": add it to the Fonts of ChatScheme.res
-	// (see the instructions). If it does not exist, the name font is used.
+	// The fonts come from ChatScheme.res (add them there, see the instructions):
+	//   ChatFont  - number of players
+	//   ScoreTeam - name of the team (bigger)
+	//   ScoreBig  - score of the team (big)
+	//   ScoreRow  - names of the players in the two-team layout
+	// A font that does not exist is replaced by ChatFont, or by the default font for the players.
 	vgui2::IScheme *pChatScheme = vgui2::scheme()->GetIScheme(vgui2::scheme()->GetScheme("ChatScheme"));
 	m_hBannerNameFont = pChatScheme ? pChatScheme->GetFont("ChatFont") : 0;
+	m_hBannerTeamFont = pChatScheme ? pChatScheme->GetFont("ScoreTeam") : 0;
 	m_hBannerScoreFont = pChatScheme ? pChatScheme->GetFont("ScoreBig") : 0;
+	m_hRowFont = pChatScheme ? pChatScheme->GetFont("ScoreRow") : 0;
+
+	if (!m_hBannerTeamFont)
+		m_hBannerTeamFont = m_hBannerNameFont;
 	if (!m_hBannerScoreFont)
 		m_hBannerScoreFont = m_hBannerNameFont;
 
-	AsBox(m_pBoxLeft)->SetFonts(m_hBannerNameFont, m_hBannerScoreFont);
-	AsBox(m_pBoxRight)->SetFonts(m_hBannerNameFont, m_hBannerScoreFont);
+	AsBox(m_pBoxLeft)->SetFonts(m_hBannerTeamFont, m_hBannerNameFont, m_hBannerScoreFont);
+	AsBox(m_pBoxRight)->SetFonts(m_hBannerTeamFont, m_hBannerNameFont, m_hBannerScoreFont);
 }
 
 void CScorePanel::UpdateTeamBanner(int nTeamID, const wchar_t *name, int teamPlayers, int totalPlayers, int score)
@@ -1521,7 +1637,61 @@ void CScorePanel::UpdateTeamBanner(int nTeamID, const wchar_t *name, int teamPla
 	V_snwprintf(scoreText, 16, L"%d", score);
 
 	box->SetTeamColor(g_pViewport->GetTeamColor(nTeamID));
+	box->SetImage(GetTeamImage(nTeamID));
 	box->SetTexts(name, count, scoreText);
+}
+
+vgui2::SectionedListPanel *CScorePanel::ListForPlayer(int client)
+{
+	const PlayerData &pd = m_PlayerData[client];
+
+	if (m_bTwoTeamMode && pd.nTeamID == TEAM_SPECTATOR)
+		return (pd.nSpecSide == 1) ? m_pListRight : m_pListLeft;
+
+	return ListForTeam(pd.nTeamID);
+}
+
+void CScorePanel::RemoveRow(int client)
+{
+	PlayerData &pd = m_PlayerData[client];
+
+	if (pd.nItemID != -1)
+	{
+		vgui2::SectionedListPanel *list = ListForPlayer(client);
+
+		if (list->IsItemIDValid(pd.nItemID))
+			list->RemoveItem(pd.nItemID);
+	}
+
+	if (pd.nSpecSide != -1)
+	{
+		m_iSpecCount[pd.nSpecSide]--;
+		pd.nSpecSide = -1;
+	}
+
+	pd.nItemID = -1;
+}
+
+void CScorePanel::EnsureSpectatorSection(int side)
+{
+	if (m_bSpecSectionCreated[side])
+		return;
+
+	m_bSpecSectionCreated[side] = true;
+	CreateSectionIn(side == 1 ? m_pListRight : m_pListLeft, TEAM_SPECTATOR);
+}
+
+int CScorePanel::GetTeamImage(int nTeamID)
+{
+	switch (nTeamID)
+	{
+	case 1: return m_iTeamImage1;
+	case 2: return m_iTeamImage2;
+	case 3: return m_iTeamImage3;
+	case 4: return m_iTeamImage4;
+	}
+
+	return -1;
 }
 
 bool CScorePanel::StaticPlayerSortFuncByFrags(vgui2::SectionedListPanel *list, int itemID1, int itemID2)
