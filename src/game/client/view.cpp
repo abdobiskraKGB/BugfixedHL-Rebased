@@ -24,6 +24,7 @@
 #include "hud/jumpspeed.h"
 #include "hud/strafeguide.h"
 #include "fog.h"
+#include "model_preview.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846 // matches value in gcc v2 math.h
@@ -1708,6 +1709,8 @@ void CL_DLLEXPORT V_CalcRefdef(struct ref_params_s *pparams)
 	g_vViewForward = pparams->forward;
 	g_vViewRight = pparams->right;
 	g_vViewUp = pparams->up;
+
+	modelpreview::Apply(pparams);
 
 	/*
 // Example of how to overlay the whole screen with red at 50 % alpha
