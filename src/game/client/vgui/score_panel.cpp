@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <functional>
 #include <string>
+#include <utility>
 #include <vgui/IImage.h>
 #include <vgui/IScheme.h>
 #include <vgui/IInputInternal.h>
@@ -33,6 +35,7 @@ ConVar hud_scoreboard_showeff("hud_scoreboard_showeff", "1", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_size("hud_scoreboard_size", "0", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_spacing_normal("hud_scoreboard_spacing_normal", "0", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_spacing_compact("hud_scoreboard_spacing_compact", "0", FCVAR_ARCHIVE);
+ConVar hud_scoreboard_debug("hud_scoreboard_debug", "0", 0, "Print the layout and the players of the scoreboard to the console when it opens");
 ConVar hud_scoreboard_twoteams("hud_scoreboard_twoteams", "1", FCVAR_ARCHIVE, "Show two teams side by side (two lists) when the match has exactly two teams");
 
 namespace
@@ -140,6 +143,18 @@ auto SetItemFontIfAvailable(L *list, int itemID, vgui2::HFont font, int) -> decl
 template <class L>
 void SetItemFontIfAvailable(L *, int, vgui2::HFont, long)
 {
+}
+
+template <class L>
+constexpr auto HasItemFont(int) -> decltype(std::declval<L &>().SetItemFont(0, vgui2::HFont()), bool())
+{
+	return true;
+}
+
+template <class L>
+constexpr bool HasItemFont(long)
+{
+	return false;
 }
 
 // The colored box behind the list of a team: a banner with the picture of the team, its name, the
@@ -648,6 +663,8 @@ void CScorePanel::RefreshItems()
 	}
 
 	UpdateAllClients();
+
+	DumpDebug();
 }
 
 void CScorePanel::CreateSection(int nTeamID)
@@ -796,11 +813,16 @@ void CScorePanel::UpdateClientInfo(int client)
 	// Create section for player's team if need to
 	if (m_bTwoTeamMode && pd.nTeamID == TEAM_SPECTATOR)
 	{
-		// Spectators are shared between the two lists, each new one goes to the list that has fewer
+		// Spectators are shared between the two lists: under their own team when they still have its
+		// number, otherwise in the list that has fewer
+		const int side = GetSpectatorSide(pi, pd.nSpecSide);
+		if (pd.nSpecSide != -1 && pd.nSpecSide != side)
+			RemoveRow(client); // it moves to the other list
+
 		if (pd.nSpecSide == -1)
 		{
-			pd.nSpecSide = (m_iSpecCount[1] < m_iSpecCount[0]) ? 1 : 0;
-			m_iSpecCount[pd.nSpecSide]++;
+			pd.nSpecSide = side;
+			m_iSpecCount[side]++;
 		}
 		EnsureSpectatorSection(pd.nSpecSide);
 	}
@@ -810,6 +832,20 @@ void CScorePanel::UpdateClientInfo(int client)
 	}
 
 	KeyValues *playerKv = new KeyValues("data");
+
+	// Everything the row shows. The row is only modified when it changes: every change re-sorts and
+	// re-lays out the list, which made the scoreboard slow.
+	std::string sig;
+	auto fnSetString = [&](const char *key, const char *value) {
+		playerKv->SetString(key, value);
+		sig += value;
+		sig += '\x01';
+	};
+	auto fnSetInt = [&](const char *key, int value) {
+		playerKv->SetInt(key, value);
+		sig += std::to_string(value);
+		sig += '\x01';
+	};
 
 	{
 		char buf[128];
@@ -834,10 +870,10 @@ void CScorePanel::UpdateClientInfo(int client)
 		{
 			snprintf(buf, sizeof(buf), "%s", pi->GetDisplayName(gHUD.GetColorCodeAction() == ColorCodeAction::Strip));
 		}
-		playerKv->SetString("name", buf);
+		fnSetString("name", buf);
 
 		// SteamID
-		playerKv->SetString("steamid", pi->GetSteamID());
+		fnSetString("steamid", pi->GetSteamID());
 
 		// Efficiency
 		float eff = CalculateEfficiency(pi->GetFrags(), pi->GetDeaths());
@@ -845,25 +881,26 @@ void CScorePanel::UpdateClientInfo(int client)
 			snprintf(buf, sizeof(buf), "%.0f%%", eff * 100.0);
 		else
 			snprintf(buf, sizeof(buf), "%.2f", eff);
-		playerKv->SetString("eff", buf);
+		fnSetString("eff", buf);
 
 		// Frags & deaths
-		playerKv->SetInt("frags", pi->GetFrags());
-		playerKv->SetInt("deaths", pi->GetDeaths());
+		fnSetInt("frags", pi->GetFrags());
+		fnSetInt("deaths", pi->GetDeaths());
 
 		// Ping
 		if (hud_scoreboard_showloss.GetBool())
 		{
 			snprintf(buf, sizeof(buf), "%d/%d", pi->GetPing(), pi->GetPacketLoss());
-			playerKv->SetString("ping", buf);
+			fnSetString("ping", buf);
 		}
 		else
 		{
-			playerKv->SetInt("ping", pi->GetPing());
+			fnSetInt("ping", pi->GetPing());
 		}
 	}
 
 	vgui2::SectionedListPanel *list = ListForPlayer(client);
+	const size_t rowHash = std::hash<std::string>()(sig);
 
 	if (pd.nItemID == -1)
 	{
@@ -871,15 +908,20 @@ void CScorePanel::UpdateClientInfo(int client)
 		pd.nItemID = list->AddItem(pd.nTeamID, playerKv);
 		list->SetItemFgColor(pd.nItemID, gHUD.GetClientColor(client, NoTeamColor::White));
 		list->InvalidateLayout();
+		pd.nRowHash = rowHash;
+
+		if (m_bTwoTeamMode && m_hRowFont)
+			SetItemFontIfAvailable(list, pd.nItemID, m_hRowFont, 0);
 	}
-	else
+	else if (rowHash != pd.nRowHash)
 	{
 		// Update player's row
 		list->ModifyItem(pd.nItemID, pd.nTeamID, playerKv);
-	}
+		pd.nRowHash = rowHash;
 
-	if (m_bTwoTeamMode && m_hRowFont)
-		SetItemFontIfAvailable(list, pd.nItemID, m_hRowFont, 0);
+		if (m_bTwoTeamMode && m_hRowFont)
+			SetItemFontIfAvailable(list, pd.nItemID, m_hRowFont, 0);
+	}
 
 	list->SetItemBgColor(pd.nItemID, GetPlayerBgColor(pi));
 
@@ -1130,7 +1172,7 @@ float CScorePanel::CalculateEfficiency(int kills, int deaths)
 
 int CScorePanel::GetClientIconSize()
 {
-	return clamp(ActiveList()->GetLineSpacing() - 2, 0, 32);
+	return clamp(ActiveList()->GetLineSpacing() - 2, 0, m_bTwoTeamMode ? 64 : 32);
 }
 
 void CScorePanel::CreatePlayerMenu()
@@ -1498,6 +1540,11 @@ bool CScorePanel::FitTwoLists(int &height)
 	const int listY = y + m_iTwoBannerTall + m_iTwoBannerGap;
 	const int addHeight = listY + m_iBottomPadding; // distance on the top and on the bottom of the lists
 
+	// Lay the lists out now: the content height is only right after a layout (otherwise the board
+	// jumps to its final size a moment later).
+	m_pListLeft->InvalidateLayout(true);
+	m_pListRight->InvalidateLayout(true);
+
 	int leftTall = 0, rightTall = 0;
 	m_pListLeft->GetContentSize(wide, leftTall);
 	m_pListRight->GetContentSize(wide, rightTall);
@@ -1623,8 +1670,14 @@ void CScorePanel::UpdateBannerFonts()
 	if (!m_hBannerScoreFont)
 		m_hBannerScoreFont = m_hBannerNameFont;
 
-	AsBox(m_pBoxLeft)->SetFonts(m_hBannerTeamFont, m_hBannerNameFont, m_hBannerScoreFont);
-	AsBox(m_pBoxRight)->SetFonts(m_hBannerTeamFont, m_hBannerNameFont, m_hBannerScoreFont);
+	if (m_hBannerTeamFont != m_hLastTeamFont || m_hBannerNameFont != m_hLastNameFont || m_hBannerScoreFont != m_hLastScoreFont)
+	{
+		AsBox(m_pBoxLeft)->SetFonts(m_hBannerTeamFont, m_hBannerNameFont, m_hBannerScoreFont);
+		AsBox(m_pBoxRight)->SetFonts(m_hBannerTeamFont, m_hBannerNameFont, m_hBannerScoreFont);
+		m_hLastTeamFont = m_hBannerTeamFont;
+		m_hLastNameFont = m_hBannerNameFont;
+		m_hLastScoreFont = m_hBannerScoreFont;
+	}
 }
 
 void CScorePanel::UpdateTeamBanner(int nTeamID, const wchar_t *name, int teamPlayers, int totalPlayers, int score)
@@ -1692,6 +1745,47 @@ int CScorePanel::GetTeamImage(int nTeamID)
 	}
 
 	return -1;
+}
+
+int CScorePanel::GetSpectatorSide(CPlayerInfo *pi, int current)
+{
+	const int team = pi->GetTeamNumber();
+
+	// still has the number of one of the two teams: it is listed under that team
+	if (team != 0 && team == m_iLeftTeam)
+		return 0;
+	if (team != 0 && team == m_iRightTeam)
+		return 1;
+
+	// the side it already has
+	if (current != -1)
+		return current;
+
+	// the list that has fewer spectators
+	return (m_iSpecCount[1] < m_iSpecCount[0]) ? 1 : 0;
+}
+
+void CScorePanel::DumpDebug()
+{
+	if (!hud_scoreboard_debug.GetBool())
+		return;
+
+	ConPrintf("[scoreboard] two-team layout: %d (left team %d, right team %d)\n", m_bTwoTeamMode ? 1 : 0, m_iLeftTeam, m_iRightTeam);
+	ConPrintf("[scoreboard] fonts: team=%lu count=%lu score=%lu row=%lu, SetItemFont is %s\n",
+	    (unsigned long)m_hBannerTeamFont, (unsigned long)m_hBannerNameFont, (unsigned long)m_hBannerScoreFont, (unsigned long)m_hRowFont,
+	    HasItemFont<vgui2::SectionedListPanel>(0) ? "available" : "NOT available");
+	ConPrintf("[scoreboard] row spacing %d, avatar size %d\n", ActiveList()->GetLineSpacing(), GetClientIconSize());
+
+	for (int i = 1; i <= MAX_PLAYERS; i++)
+	{
+		CPlayerInfo *pi = GetPlayerInfo(i);
+		if (!pi->IsConnected())
+			continue;
+
+		const PlayerData &pd = m_PlayerData[i];
+		ConPrintf("[scoreboard] #%d %s | team number %d, team name \"%s\", spectator %d | listed as team %d, side %d\n",
+		    i, pi->GetDisplayName(true), pi->GetTeamNumber(), pi->GetTeamName(), pi->IsSpectator() ? 1 : 0, pd.nTeamID, pd.nSpecSide);
+	}
 }
 
 bool CScorePanel::StaticPlayerSortFuncByFrags(vgui2::SectionedListPanel *list, int itemID1, int itemID2)

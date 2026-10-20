@@ -101,6 +101,7 @@ private:
 		int nItemID = -1;
 		int nTeamID = 0;
 		int nSpecSide = -1; // two-team layout: spectators are shared between the lists, 0 = left, 1 = right
+		size_t nRowHash = 0; // what the row shows: it is only modified when this changes
 	};
 
 	struct MenuData
@@ -138,6 +139,9 @@ private:
 	int m_iTwoNameWide = 0;
 	vgui2::HFont m_hBannerTeamFont = 0; // name of the team in the banner
 	vgui2::HFont m_hRowFont = 0;        // names of the players in the two-team layout (0 = default font)
+	vgui2::HFont m_hLastTeamFont = 0;   // fonts given to the banners (they are only changed when they differ)
+	vgui2::HFont m_hLastNameFont = 0;
+	vgui2::HFont m_hLastScoreFont = 0;
 	int m_iSpecCount[2] = { 0, 0 };     // spectators shown in the left / right list
 	bool m_bSpecSectionCreated[2] = { false, false };
 	bool m_bTwoTeamMode = false;
@@ -373,6 +377,18 @@ private:
 	 * Creates the spectators section in the left (0) or right (1) list.
 	 */
 	void EnsureSpectatorSection(int side);
+
+	/**
+	 * Two-team layout: the list (0 = left, 1 = right) where a spectator is shown. A spectator that still
+	 * has the number of one of the two teams is shown under that team, the others are balanced.
+	 * current = the side it already has, -1 if none.
+	 */
+	int GetSpectatorSide(CPlayerInfo *pi, int current);
+
+	/**
+	 * Prints the layout and the players to the console (hud_scoreboard_debug 1).
+	 */
+	void DumpDebug();
 
 	/**
 	 * Returns the picture of the team (texture id), -1 if it has none.
