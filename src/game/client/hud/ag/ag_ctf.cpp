@@ -25,7 +25,7 @@ static char *s_szSounds[] = {
 	"ctf/redleads",
 	"ctf/teamstied",
 	"ctf/suddendeath",
-	"ctf/stolen"
+	"ctf/stolen",
 	"ctf/capture"
 };
 
@@ -82,7 +82,7 @@ void AgHudCTF::Reset(void)
 
 void AgHudCTF::Draw(float fTime)
 {
-	if (m_iFlagStatus1 == Off || m_iFlagStatus2 == Off || gHUD.m_iIntermission)
+	if (m_iFlagStatus1 < Home || m_iFlagStatus1 > Carry || m_iFlagStatus2 < Home || m_iFlagStatus2 > Carry || gHUD.m_iIntermission)
 	{
 		Reset();
 		return;
@@ -112,8 +112,9 @@ void AgHudCTF::Draw(float fTime)
 int AgHudCTF::MsgFunc_CTF(const char *pszName, int iSize, void *pbuf)
 {
 	BEGIN_READ(pbuf, iSize);
-	m_iFlagStatus1 = READ_BYTE();
-	m_iFlagStatus2 = READ_BYTE();
+	// The server sends "Off" (-1) as a byte, READ_BYTE gives 255 - read it signed.
+	m_iFlagStatus1 = (signed char)READ_BYTE();
+	m_iFlagStatus2 = (signed char)READ_BYTE();
 
 	if (m_iFlagStatus1 != Off && m_iFlagStatus2 != Off)
 		m_iFlags |= HUD_ACTIVE;
