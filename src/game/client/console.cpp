@@ -472,10 +472,6 @@ const Color ConColor::Red = Color(249, 54, 54, 255);
 const Color ConColor::Green = Color(77, 219, 83, 255);
 const Color ConColor::Yellow = Color(240, 205, 65, 255);
 const Color ConColor::Cyan = Color(111, 234, 247, 255);
-
-//-----------------------------------------------------
-// Console print
-//-----------------------------------------------------
 //-----------------------------------------------------
 // Console print
 //-----------------------------------------------------
@@ -487,13 +483,8 @@ void ConPrintf(const char *fmt, ...)
 
     vsnprintf(buf, sizeof(buf), fmt, args);
     
-    // تشكيل وعكس النص العربي للكونسول
-    std::string textStr(buf);
-    if (ArabicText::ContainsArabicWide(std::wstring(textStr.begin(), textStr.end())))
-    {
-        textStr = ArabicText::ToVisualUtf8(textStr);
-    }
-
+    // استدعاء دالة ToVisualUtf8 مباشرة لمعالجة UTF-8 وتشكيل وعكس النص العربي
+    std::string textStr = ArabicText::ToVisualUtf8(buf);
     gEngfuncs.Con_Printf("%s", textStr.c_str());
 
     va_end(args);
@@ -508,13 +499,8 @@ void ConPrintf(::Color color, const char *fmt, ...)
     console::SetColor(color);
     vsnprintf(buf, sizeof(buf), fmt, args);
     
-    // تشكيل وعكس النص العربي للكونسول الملون
-    std::string textStr(buf);
-    if (ArabicText::ContainsArabicWide(std::wstring(textStr.begin(), textStr.end())))
-    {
-        textStr = ArabicText::ToVisualUtf8(textStr);
-    }
-
+    // للكونسول الملون أيضاً
+    std::string textStr = ArabicText::ToVisualUtf8(buf);
     gEngfuncs.Con_Printf("%s", textStr.c_str());
     
     console::ResetColor();
