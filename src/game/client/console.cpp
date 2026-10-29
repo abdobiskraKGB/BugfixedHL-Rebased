@@ -16,34 +16,33 @@
 namespace console
 {
 
-	// Ambiguity between ::Color (Source SDK) and vgui::Color (VGUI1)
-	using ::Color;
+// Ambiguity between ::Color (Source SDK) and vgui::Color (VGUI1)
+using ::Color;
 
-	struct ColorOffset
-	{
-    	size_t printOffset;
-    	size_t dprintOffset;
-	};
+struct ColorOffset
+{
+	size_t printOffset;
+	size_t dprintOffset;
+};
 
-	constexpr ColorOffset COLOR_OFFSETS[] = {
-		#ifdef PLATFORM_WINDOWS
-    		ColorOffset { 0x128, 0x12C }, // Pre-9884
-    		ColorOffset { 0x12C, 0x130 }, // 9884
-    		ColorOffset { 0x130, 0x134 }, // 9891
-		#else
-    		ColorOffset { 0x124, 0x128 }, // Pre-9884
-    		ColorOffset { 0x128, 0x12C }, // 9884
-    		ColorOffset { 0x12C, 0x130 }, // 9891
-		#endif
-	};
-	class CGameConsolePrototype : public IGameConsole
-	{
-		public:
-    		bool m_bInitialized;
-    		void *m_pConsole;
-	};
+constexpr ColorOffset COLOR_OFFSETS[] = {
+#ifdef PLATFORM_WINDOWS
+	ColorOffset { 0x128, 0x12C }, // Pre-9884
+	ColorOffset { 0x12C, 0x130 }, // 9884
+	ColorOffset { 0x130, 0x134 }, // 9891
+#else
+	ColorOffset { 0x124, 0x128 }, // Pre-9884
+	ColorOffset { 0x128, 0x12C }, // 9884
+	ColorOffset { 0x12C, 0x130 }, // 9891
+#endif
+};
 
-} // namespace console
+class CGameConsolePrototype : public IGameConsole
+{
+public:
+	bool m_bInitialized;
+	void *m_pConsole;
+};
 
 //-----------------------------------------------------
 // GameUI module
@@ -128,6 +127,7 @@ static void DisableSpewOutputFunc();
 
 // True if launched with -dev (Con_DPrintf works).
 static bool s_bIsDev = false;
+}
 
 void console::Initialize()
 {
