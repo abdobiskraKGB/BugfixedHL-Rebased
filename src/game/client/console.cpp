@@ -12,7 +12,6 @@
 
 #include "hud.h"
 #include "console.h"
-#include "hud/arabic_text.h"
 
 namespace console
 {
@@ -472,42 +471,11 @@ const Color ConColor::Red = Color(249, 54, 54, 255);
 const Color ConColor::Green = Color(77, 219, 83, 255);
 const Color ConColor::Yellow = Color(240, 205, 65, 255);
 const Color ConColor::Cyan = Color(111, 234, 247, 255);
+
 //-----------------------------------------------------
 // Console print
 //-----------------------------------------------------
 void ConPrintf(const char *fmt, ...)
-{
-    static char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    
-    // استدعاء دالة ToVisualUtf8 مباشرة لمعالجة UTF-8 وتشكيل وعكس النص العربي
-    std::string textStr = ArabicText::ToVisualUtf8(buf);
-    gEngfuncs.Con_Printf("%s", textStr.c_str());
-
-    va_end(args);
-}
-
-void ConPrintf(::Color color, const char *fmt, ...)
-{
-    static char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-
-    console::SetColor(color);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    
-    // للكونسول الملون أيضاً
-    std::string textStr = ArabicText::ToVisualUtf8(buf);
-    gEngfuncs.Con_Printf("%s", textStr.c_str());
-    
-    console::ResetColor();
-
-    va_end(args);
-}
-/*void ConPrintf(const char *fmt, ...)
 {
 	static char buf[1024];
 	va_list args;
@@ -531,7 +499,7 @@ void ConPrintf(::Color color, const char *fmt, ...)
 	console::ResetColor();
 
 	va_end(args);
-}*/
+}
 
 CON_COMMAND(find, "Searches cvars and commands for a string.")
 {
