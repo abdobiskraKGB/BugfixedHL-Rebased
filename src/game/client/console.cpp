@@ -475,7 +475,52 @@ const Color ConColor::Cyan = Color(111, 234, 247, 255);
 //-----------------------------------------------------
 // Console print
 //-----------------------------------------------------
+//-----------------------------------------------------
+// Console print
+//-----------------------------------------------------
 void ConPrintf(const char *fmt, ...)
+{
+    static char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    
+    // تشكيل وعكس النص العربي للكونسول
+    std::string textStr(buf);
+    if (ArabicText::ContainsArabicWide(std::wstring(textStr.begin(), textStr.end())))
+    {
+        textStr = ArabicText::ToVisualUtf8(textStr);
+    }
+
+    gEngfuncs.Con_Printf("%s", textStr.c_str());
+
+    va_end(args);
+}
+
+void ConPrintf(::Color color, const char *fmt, ...)
+{
+    static char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+
+    console::SetColor(color);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    
+    // تشكيل وعكس النص العربي للكونسول الملون
+    std::string textStr(buf);
+    if (ArabicText::ContainsArabicWide(std::wstring(textStr.begin(), textStr.end())))
+    {
+        textStr = ArabicText::ToVisualUtf8(textStr);
+    }
+
+    gEngfuncs.Con_Printf("%s", textStr.c_str());
+    
+    console::ResetColor();
+
+    va_end(args);
+}
+/*void ConPrintf(const char *fmt, ...)
 {
 	static char buf[1024];
 	va_list args;
@@ -499,7 +544,7 @@ void ConPrintf(::Color color, const char *fmt, ...)
 	console::ResetColor();
 
 	va_end(args);
-}
+}*/
 
 CON_COMMAND(find, "Searches cvars and commands for a string.")
 {
