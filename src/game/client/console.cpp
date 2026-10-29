@@ -12,7 +12,7 @@
 
 #include "hud.h"
 #include "console.h"
-#include "arabic_text.h" // أضف هذا السطر مع الـ Includes الموجودة في الأعلى
+#include "hud/arabic_text.h"
 
 namespace console
 {
