@@ -12,6 +12,7 @@
 
 #include "hud.h"
 #include "console.h"
+#include "hud/arabic_text.h"
 
 namespace console
 {
