@@ -12,6 +12,7 @@
 
 #include "hud.h"
 #include "console.h"
+#include "arabic_text.h" // أضف هذا السطر مع الـ Includes الموجودة في الأعلى
 
 namespace console
 {
@@ -21,28 +22,40 @@ using ::Color;
 
 struct ColorOffset
 {
-	size_t printOffset;
-	size_t dprintOffset;
+    size_t printOffset;
+    size_t dprintOffset;
 };
 
 constexpr ColorOffset COLOR_OFFSETS[] = {
 #ifdef PLATFORM_WINDOWS
-	ColorOffset { 0x128, 0x12C }, // Pre-9884
-	ColorOffset { 0x12C, 0x130 }, // 9884
-	ColorOffset { 0x130, 0x134 }, // 9891
+    ColorOffset { 0x128, 0x12C }, // Pre-9884
+    ColorOffset { 0x12C, 0x130 }, // 9884
+    ColorOffset { 0x130, 0x134 }, // 9891
 #else
-	ColorOffset { 0x124, 0x128 }, // Pre-9884
-	ColorOffset { 0x128, 0x12C }, // 9884
-	ColorOffset { 0x12C, 0x130 }, // 9891
+    ColorOffset { 0x124, 0x128 }, // Pre-9884
+    ColorOffset { 0x128, 0x12C }, // 9884
+    ColorOffset { 0x12C, 0x130 }, // 9891
 #endif
 };
 
 class CGameConsolePrototype : public IGameConsole
 {
 public:
-	bool m_bInitialized;
-	void *m_pConsole;
+    bool m_bInitialized;
+    void *m_pConsole;
 };
+
+// --- أضف دالة معالجة النصوص العربية للكونسول هنا ---
+inline std::string ProcessConsoleArabicText(const std::string &text)
+{
+    if (ArabicText::ContainsArabicWide(std::wstring(text.begin(), text.end())))
+    {
+        return ArabicText::ToVisualUtf8(text);
+    }
+    return text;
+}
+
+} // namespace console
 
 //-----------------------------------------------------
 // GameUI module
@@ -475,6 +488,42 @@ const Color ConColor::Cyan = Color(111, 234, 247, 255);
 //-----------------------------------------------------
 // Console print
 //-----------------------------------------------------
+//-----------------------------------------------------
+// Console print
+//-----------------------------------------------------
+void ConPrintf(const char *fmt, ...)
+{
+    static char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    
+    // لصق كود المعالجة العربية هنا
+    std::string processed = console::ProcessConsoleArabicText(buf);
+    gEngfuncs.Con_Printf("%s", processed.c_str());
+
+    va_end(args);
+}
+
+void ConPrintf(::Color color, const char *fmt, ...)
+{
+    static char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+
+    console::SetColor(color);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    
+    // لصق كود المعالجة العربية هنا أيضاً للكونسول الملون
+    std::string processed = console::ProcessConsoleArabicText(buf);
+    gEngfuncs.Con_Printf("%s", processed.c_str());
+    
+    console::ResetColor();
+
+    va_end(args);
+}
+/*
 void ConPrintf(const char *fmt, ...)
 {
 	static char buf[1024];
@@ -499,7 +548,7 @@ void ConPrintf(::Color color, const char *fmt, ...)
 	console::ResetColor();
 
 	va_end(args);
-}
+}*/
 
 CON_COMMAND(find, "Searches cvars and commands for a string.")
 {
