@@ -53,7 +53,7 @@ namespace console
     	}
    	 	return text;
 	}
-} // namespace console
+}; // namespace console
 
 //-----------------------------------------------------
 // GameUI module
