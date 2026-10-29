@@ -44,16 +44,7 @@ namespace console
     		void *m_pConsole;
 	};
 
-	// --- أضف دالة معالجة النصوص العربية للكونسول هنا ---
-	inline std::string ProcessConsoleArabicText(const std::string &text)
-	{
-   	 	if (ArabicText::ContainsArabicWide(std::wstring(text.begin(), text.end())))
-    	{
-        	return ArabicText::ToVisualUtf8(text);
-    	}
-   	 	return text;
-	}
-}; // namespace console
+} // namespace console
 
 //-----------------------------------------------------
 // GameUI module
