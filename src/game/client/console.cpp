@@ -128,7 +128,6 @@ static void DisableSpewOutputFunc();
 
 // True if launched with -dev (Con_DPrintf works).
 static bool s_bIsDev = false;
-}
 
 void console::Initialize()
 {
