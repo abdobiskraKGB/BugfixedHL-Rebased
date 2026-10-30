@@ -35,6 +35,9 @@
 
 #define MOUSE_BUTTON_COUNT 5
 
+void CL_DLLEXPORT IN_ActivateMouse(void);
+void CL_DLLEXPORT IN_DeactivateMouse(void);
+
 enum class MouseMode
 {
 	Auto = -1,
@@ -108,6 +111,10 @@ int mouseinitialized;
 static int mouseparmsvalid;
 static int mouseshowtoggle = 1;
 static bool s_bIsRelativeMode = false;
+static bool s_bSteamOverlayActive = false; // Steam overlay (profile page etc.) owns the mouse
+static bool s_bMouseHealPending = false; // set on (re)connect, cleared when the mouse is confirmed active
+static double s_flMouseHealStart = 0.0;
+ConVar m_autoreactivate("m_autoreactivate", "1", FCVAR_BHL_ARCHIVE, "Re-activate the mouse by itself if the engine forgot to do it after reconnecting");
 
 // joystick defines and variables
 // where should defines be moved?
@@ -181,11 +188,83 @@ static int dinput_mouse_acquired = 0;
 static DIMOUSESTATE dinput_mousestate;
 #endif
 
-void IN_SetRelativeMouseMode(bool state)
+#ifdef _WIN32
+static HWND IN_FindGameWindow()
 {
-	if (s_bIsRelativeMode == state)
+	HWND hwnd = GetActiveWindow();
+	if (hwnd)
+		return hwnd;
+
+	hwnd = GetForegroundWindow();
+	if (hwnd)
+	{
+		DWORD pid = 0;
+		GetWindowThreadProcessId(hwnd, &pid);
+		if (pid == GetCurrentProcessId())
+			return hwnd;
+	}
+
+	return nullptr;
+}
+
+static bool IN_IsGameWindowForeground()
+{
+	HWND hwnd = GetForegroundWindow();
+	if (!hwnd)
+		return false;
+
+	DWORD pid = 0;
+	GetWindowThreadProcessId(hwnd, &pid);
+	return pid == GetCurrentProcessId();
+}
+
+/**
+ * Makes sure the DirectInput mouse is really acquired. DI_NOEFFECT (S_FALSE) means "already acquired".
+ */
+static bool DINPUT_EnsureAcquired()
+{
+	if (!dinput_lpdiMouse)
+		return false;
+
+	if (dinput_mouse_acquired)
+		return true;
+
+	HRESULT hr = dinput_lpdiMouse->Acquire();
+	if (hr == DI_OK || hr == DI_NOEFFECT)
+	{
+		dinput_mouse_acquired = 1;
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * Re-creates the cooperative level and data format of the DirectInput mouse.
+ * IN_StartupMouse can run before the game window exists (GetActiveWindow() == NULL), which silently
+ * leaves the device half-initialized.
+ */
+static void DINPUT_Reinit()
+{
+	if (!dinput_lpdiMouse)
 		return;
 
+	dinput_lpdiMouse->Unacquire();
+	dinput_mouse_acquired = 0;
+
+	HWND hwnd = IN_FindGameWindow();
+	if (hwnd)
+		dinput_lpdiMouse->SetCooperativeLevel(hwnd, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND);
+
+	dinput_lpdiMouse->SetDataFormat(&c_dfDIMouse);
+}
+#endif
+
+void IN_SetRelativeMouseMode(bool state)
+{
+	// Do not early-out on the cached state: the engine / GameUI / Steam overlay may change the real SDL
+	// relative mode behind our back (e.g. when a server shuts down and the client returns to the menu),
+	// leaving the cache stale and the mouse dead after reconnect. SDL itself ignores redundant calls.
 	s_bIsRelativeMode = state;
 	GetSDL()->SetRelativeMouseMode((SDL_bool)state);
 }
@@ -348,15 +427,110 @@ void IN_RunFrame()
 	}
 }
 
+/**
+ * Called on every (re)connect (HUD_VidInit) and demo start (HUD_Reset).
+ * Drops any stale mouse state left from the previous session so the mouse can't stay dead.
+ */
+void IN_OnNewSession()
+{
+	mx_accum = my_accum = 0;
+	old_mouse_x = old_mouse_y = 0;
+	mouse_x = mouse_y = 0;
+	mouse_oldbuttonstate = 0;
+	s_bSteamOverlayActive = false;
+
+	if (!mouseinitialized)
+		return;
+
+	if (m_mode == MouseMode::RawInput)
+	{
+		IN_SetRelativeMouseMode(false);
+	}
+
+#ifdef _WIN32
+	if (m_mode == MouseMode::DirectInput)
+		DINPUT_Reinit();
+#endif
+
+	if (mouseactive)
+	{
+		// Engine says the mouse is active - make sure the device really is
+		mouseactive = 0;
+		IN_ActivateMouse();
+	}
+
+	s_bMouseHealPending = true;
+	s_flMouseHealStart = gEngfuncs.GetAbsoluteTime();
+}
+
+/**
+ * Safety net: if after reconnecting the engine did not call IN_ActivateMouse (mouse stays inactive
+ * while we are in the game and nothing needs the cursor), activate it ourselves.
+ */
+static void IN_EnsureMouseActive()
+{
+	if (!s_bMouseHealPending)
+		return;
+
+	if (mouseactive)
+	{
+		s_bMouseHealPending = false;
+		return;
+	}
+
+	if (!m_autoreactivate.GetBool() || !mouseinitialized || s_bSteamOverlayActive || iMouseInUse)
+		return;
+
+	if (!g_pVGuiSurface || g_pVGuiSurface->IsCursorVisible())
+		return;
+
+	// Give the engine a moment to activate the mouse on its own
+	if (gEngfuncs.GetAbsoluteTime() - s_flMouseHealStart < 1.0)
+		return;
+
+#ifdef _WIN32
+	if (!IN_IsGameWindowForeground())
+		return;
+#endif
+
+	gEngfuncs.Con_DPrintf("Mouse was not activated by the engine after connecting, activating it.\n");
+	IN_ActivateMouse();
+	s_bMouseHealPending = false;
+}
+
+/**
+ * Steam overlay was opened (e.g. "Steam profile" in the scoreboard menu).
+ * Give the cursor back, otherwise the game keeps re-centering / clipping it and the overlay can't be used.
+ */
+void IN_SteamOverlayShown()
+{
+	gHUD.CallOnNextFrame([]() {
+		s_bSteamOverlayActive = true;
+		IN_DeactivateMouse();
+	});
+}
+
 void IN_SteamOverlayHidden()
 {
 	gHUD.CallOnNextFrame([]() {
-		if (mouseactive && m_mode == MouseMode::RawInput && !g_pVGuiSurface->IsCursorVisible())
+		s_bSteamOverlayActive = false;
+
+		if (!g_pVGuiSurface->IsCursorVisible())
 		{
-			// Hiding Steam overlay in SDL2 input mode breaks the mouse.
-			// Relative mode needs to be reset
-			IN_SetRelativeMouseMode(false);
-			IN_SetRelativeMouseMode(true);
+			// Hiding Steam overlay breaks the mouse (relative mode / clip / acquire are lost).
+			// Re-activate everything.
+			if (m_mode == MouseMode::RawInput)
+			{
+				IN_SetRelativeMouseMode(false);
+			}
+
+			IN_ActivateMouse();
+		}
+		else
+		{
+			// Cursor is needed by a VGUI panel, the mouse will be activated by the engine when it closes
+			s_bMouseHealPending = true;
+			s_flMouseHealStart = gEngfuncs.GetAbsoluteTime();
 		}
 	});
 }
@@ -453,11 +627,8 @@ void CL_DLLEXPORT IN_ActivateMouse(void)
 	if (mouseparmsvalid)
 		restore_spi = SystemParametersInfo(SPI_SETMOUSE, 0, newmouseparms, 0);
 
-	if (dinput_lpdiMouse && !dinput_mouse_acquired)
-	{
-		if (dinput_lpdiMouse->Acquire() == DI_OK)
-			dinput_mouse_acquired = 1;
-	}
+	if (m_mode == MouseMode::DirectInput)
+		DINPUT_EnsureAcquired();
 
 	// Always clip cursor in fullscreen mode
 	// Except when SDL is used
@@ -500,8 +671,10 @@ void CL_DLLEXPORT IN_DeactivateMouse(void)
 
 	if (dinput_lpdiMouse && dinput_mouse_acquired)
 	{
-		if (dinput_lpdiMouse->Unacquire() == DI_OK)
-			dinput_mouse_acquired = 0;
+		// DI_NOEFFECT means it was already unacquired (e.g. input lost) - the flag must be cleared anyway,
+		// otherwise IN_ActivateMouse would never acquire it again.
+		dinput_lpdiMouse->Unacquire();
+		dinput_mouse_acquired = 0;
 	}
 
 	ClipCursor(NULL);
@@ -772,7 +945,7 @@ IN_MouseMove
 */
 void IN_MouseMove(float frametime, usercmd_t *cmd)
 {
-	int mx, my;
+	int mx = 0, my = 0;
 	Vector viewangles;
 
 	gEngfuncs.GetViewAngles((float *)viewangles);
@@ -809,13 +982,21 @@ void IN_MouseMove(float frametime, usercmd_t *cmd)
 		else if (m_mode == MouseMode::DirectInput)
 		{
 #ifdef _WIN32
-			if (dinput_mouse_acquired)
+			ZeroMemory(&dinput_mousestate, sizeof(dinput_mousestate));
+			if (DINPUT_EnsureAcquired())
 			{
 				HRESULT hr = dinput_lpdiMouse->GetDeviceState(sizeof(DIMOUSESTATE), (LPVOID)&dinput_mousestate);
 				if (hr == DIERR_NOTACQUIRED || hr == DIERR_INPUTLOST)
-					dinput_lpdiMouse->Acquire();
+				{
+					// Device was lost (focus change, disconnect, ...). Re-acquire on the next try.
+					dinput_mouse_acquired = 0;
+					ZeroMemory(&dinput_mousestate, sizeof(dinput_mousestate));
+					DINPUT_EnsureAcquired();
+				}
 				else if (hr == DI_BUFFEROVERFLOW)
 					DINPUT_SetBufferSize();
+				else if (FAILED(hr))
+					ZeroMemory(&dinput_mousestate, sizeof(dinput_mousestate));
 			}
 #else
 			Assert(!("MouseMode::DirectInput is not supported by platform"));
@@ -849,11 +1030,8 @@ void IN_MouseMove(float frametime, usercmd_t *cmd)
 		else if (m_mode == MouseMode::DirectInput)
 		{
 #ifdef _WIN32
-			if (dinput_mouse_acquired)
-			{
-				mx = dinput_mousestate.lX + mx_accum;
-				my = dinput_mousestate.lY + my_accum;
-			}
+			mx = dinput_mousestate.lX + mx_accum;
+			my = dinput_mousestate.lY + my_accum;
 #else
 			Assert(!("MouseMode::DirectInput is not supported by platform"));
 #endif
@@ -959,7 +1137,7 @@ IN_Accumulate
 void CL_DLLEXPORT IN_Accumulate(void)
 {
 	//only accumulate mouse if we are not moving the camera with the mouse
-	if (!iMouseInUse && !g_pVGuiSurface->IsCursorVisible())
+	if (!iMouseInUse && !s_bSteamOverlayActive && !g_pVGuiSurface->IsCursorVisible())
 	{
 		if (mouseactive)
 		{
@@ -980,17 +1158,22 @@ void CL_DLLEXPORT IN_Accumulate(void)
 			else if (m_mode == MouseMode::DirectInput)
 			{
 #ifdef _WIN32
-				if (dinput_mouse_acquired)
+				if (DINPUT_EnsureAcquired())
 				{
 					HRESULT hr = dinput_lpdiMouse->GetDeviceState(sizeof(DIMOUSESTATE), (LPVOID)&dinput_mousestate);
 
 					if (hr == DIERR_NOTACQUIRED || hr == DIERR_INPUTLOST)
-						dinput_lpdiMouse->Acquire();
+					{
+						dinput_mouse_acquired = 0;
+						DINPUT_EnsureAcquired();
+					}
 					else if (hr == DI_BUFFEROVERFLOW)
 						DINPUT_SetBufferSize();
-
-					mx_accum += dinput_mousestate.lX;
-					my_accum += dinput_mousestate.lY;
+					else if (SUCCEEDED(hr))
+					{
+						mx_accum += dinput_mousestate.lX;
+						my_accum += dinput_mousestate.lY;
+					}
 				}
 #else
 				Assert(!("MouseMode::DirectInput is not supported by platform"));
@@ -1451,7 +1634,9 @@ IN_Move
 */
 void IN_Move(float frametime, usercmd_t *cmd)
 {
-	if (!iMouseInUse && mouseactive)
+	IN_EnsureMouseActive();
+
+	if (!iMouseInUse && mouseactive && !s_bSteamOverlayActive)
 	{
 		IN_MouseMove(frametime, cmd);
 	}

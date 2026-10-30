@@ -49,6 +49,15 @@ CHud gHUD;
 
 void InitInput(void);
 void ShutdownInput();
+void IN_OnNewSession();
+
+#ifdef _WIN32
+void CrashHandler_InstallShutdownHook();
+void CrashHandler_NotifyShutdown();
+#else
+inline void CrashHandler_InstallShutdownHook() {}
+inline void CrashHandler_NotifyShutdown() {}
+#endif
 void EV_HookEvents(void);
 void IN_Commands(void);
 
@@ -279,6 +288,7 @@ int CL_DLLEXPORT HUD_VidInit(void)
 	//	RecClHudVidInit();
 	g_pViewport->VidInit();
 	gHUD.VidInit();
+	IN_OnNewSession();
 	g_StudioRenderer.InitOnConnect();
 	PM_ResetBHopDetection();
 	PM_ResetUseSlowDownDetection();
@@ -304,6 +314,7 @@ void CL_DLLEXPORT HUD_Init(void)
 	console::HudInit();
 	CEnginePatches::Get().Init();
 	InitInput();
+	CrashHandler_InstallShutdownHook();
 	ClientSteamContext().Activate();
 	CClientOpenGL::Get().Init();
 	gHUD.Init();
@@ -365,6 +376,7 @@ void CL_DLLEXPORT HUD_Reset(void)
 	//	RecClHudReset();
 
 	gHUD.VidInit();
+	IN_OnNewSession();
 }
 
 /*
@@ -434,6 +446,9 @@ void CL_DLLEXPORT HUD_ChatInputPosition(int *x, int *y)
 void CL_DLLEXPORT HUD_Shutdown(void)
 {
 	//	RecClShutdown();
+
+	// From now on any exception is a part of the regular exit: no crash report / dialog
+	CrashHandler_NotifyShutdown();
 
 	console::HudShutdown();
 	gHUD.Shutdown();

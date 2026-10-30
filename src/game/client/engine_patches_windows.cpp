@@ -822,6 +822,12 @@ public:
 	{
 		m_bIsDetaching = true;
 
+		if (m_hMsgHook)
+		{
+			UnhookWindowsHookEx(m_hMsgHook);
+			m_hMsgHook = nullptr;
+		}
+
 		if (m_hHandler)
 		{
 			RemoveVectoredExceptionHandler(m_hHandler);
@@ -840,6 +846,15 @@ public:
 		// We will handle all fatal unexpected exceptions, like STATUS_ACCESS_VIOLATION
 		// But skip DLL Not Found exception, which happen on old non-steam when steam is running
 		// Also skip while detach is in process, cos we can't write files (not sure about message boxes, but anyway...)
+		if (m_bShuttingDown && (exceptionCode & 0xF0000000L) == 0xC0000000L)
+		{
+			// The game is being closed (taskbar "Close window", Alt+F4, quit, End task).
+			// An exception while tearing down is not worth a crash report / Notepad / message box.
+			// Also suppress the Windows "stopped working" box, so the game just exits.
+			SetErrorMode(SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+			return EXCEPTION_CONTINUE_SEARCH;
+		}
+
 		if ((exceptionCode & 0xF0000000L) == 0xC0000000L && exceptionCode != 0xC0000139 && !m_bIsDetaching)
 		{
 			time_t timestamp = time(nullptr);
@@ -1193,6 +1208,23 @@ private:
 		FILE *m_pFile = nullptr;
 	};
 
+public:
+	void NotifyShutdown() { m_bShuttingDown = true; }
+
+	// Detects that the user is closing the window (WM_CLOSE etc.) before the client DLL gets HUD_Shutdown
+	void InstallShutdownHook()
+	{
+		if (m_hMsgHook)
+			return;
+
+		m_hMsgHook = SetWindowsHookExA(WH_CALLWNDPROC, ShutdownHookProc, nullptr, GetCurrentThreadId());
+	}
+
+private:
+	static LRESULT CALLBACK ShutdownHookProc(int code, WPARAM wParam, LPARAM lParam);
+
+	bool m_bShuttingDown = false;
+	HHOOK m_hMsgHook = nullptr;
 	bool m_bIsDetaching = false;
 	PVOID m_hHandler = nullptr;
 	tm m_CrashTime;
@@ -1204,6 +1236,33 @@ static CWindowsCrashHandler s_CrashHandler;
 static LONG NTAPI CrashHandlerCaller(PEXCEPTION_POINTERS pExceptionInfo)
 {
 	return s_CrashHandler.VectoredExceptionsHandler(pExceptionInfo);
+}
+
+LRESULT CALLBACK CWindowsCrashHandler::ShutdownHookProc(int code, WPARAM wParam, LPARAM lParam)
+{
+	if (code == HC_ACTION)
+	{
+		const CWPSTRUCT *msg = (const CWPSTRUCT *)lParam;
+
+		if (msg->message == WM_CLOSE
+		    || (msg->message == WM_SYSCOMMAND && (msg->wParam & 0xFFF0) == SC_CLOSE)
+		    || (msg->message == WM_ENDSESSION && msg->wParam))
+		{
+			s_CrashHandler.NotifyShutdown();
+		}
+	}
+
+	return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
+void CrashHandler_InstallShutdownHook()
+{
+	s_CrashHandler.InstallShutdownHook();
+}
+
+void CrashHandler_NotifyShutdown()
+{
+	s_CrashHandler.NotifyShutdown();
 }
 
 //-------------------------------------------------------------------
