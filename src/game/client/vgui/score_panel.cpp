@@ -30,6 +30,7 @@ ConVar hud_scoreboard_showavatars("hud_scoreboard_showavatars", "1", FCVAR_ARCHI
 ConVar hud_scoreboard_showloss("hud_scoreboard_showloss", "1", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_efftype("hud_scoreboard_efftype", "0", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_effpercent("hud_scoreboard_effpercent", "0", FCVAR_ARCHIVE);
+ConVar hud_scoreboard_profile_browser("hud_scoreboard_profile_browser", "0", FCVAR_ARCHIVE, "Open player Steam profile in the web browser instead of the Steam overlay");
 ConVar hud_scoreboard_showsteamid("hud_scoreboard_showsteamid", "1", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_showeff("hud_scoreboard_showeff", "1", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_size("hud_scoreboard_size", "0", FCVAR_ARCHIVE);
@@ -1287,7 +1288,7 @@ void CScorePanel::OnPlayerMenuCommand(MenuAction command)
 	}
 	case MenuAction::SteamProfile:
 	{
-		if (ClientSteamContext().SteamFriends())
+		if (!hud_scoreboard_profile_browser.GetBool() && ClientSteamContext().SteamFriends() && ClientSteamContext().SteamUtils() && ClientSteamContext().SteamUtils()->IsOverlayEnabled())
 		{
 			// Open in overlay
 			CSteamID steamId = CSteamID((uint64)m_MenuData.nSteamID64);
