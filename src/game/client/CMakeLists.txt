@@ -50,6 +50,9 @@ set( SOURCE_FILES
 	gameui/gameui_test_panel.h
 	gameui/gameui_viewport.cpp
 	gameui/gameui_viewport.h
+	gameui/console_arabic_preview.cpp
+	gameui/console_arabic_preview.h
+	gameui/console_arabic_text.h
 
 	hl/hl_baseentity.cpp
 	hl/hl_events.cpp

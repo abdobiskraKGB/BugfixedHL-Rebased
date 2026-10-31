@@ -44,6 +44,7 @@
 #include "opengl.h"
 #include "engfuncs.h"
 #include "engine_builds.h"
+#include "gameui/console_arabic_preview.h"
 
 CHud gHUD;
 
@@ -449,6 +450,7 @@ void CL_DLLEXPORT HUD_Shutdown(void)
 
 	// From now on any exception is a part of the regular exit: no crash report / dialog
 	CrashHandler_NotifyShutdown();
+	ConsoleArabicPreview_Shutdown();
 
 	console::HudShutdown();
 	gHUD.Shutdown();
