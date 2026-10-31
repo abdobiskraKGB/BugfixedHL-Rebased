@@ -360,6 +360,21 @@ void modelpreview::Apply(ref_params_s *pparams)
 	view->curstate.rendermode = kRenderNormal;
 	view->curstate.renderfx = kRenderFxNone;
 	view->curstate.renderamt = 255;
+	view->curstate.gaitsequence = 0;
+
+	// Neutral pose. Bone controllers (torso twist etc.) and blend values of the viewmodel entity are
+	// left at whatever the weapon code wrote (usually 0 = the END of the range), which twists the upper
+	// body against the legs. 127 is the middle of the range, i.e. "looking straight ahead".
+	for (int i = 0; i < 4; i++)
+	{
+		view->curstate.controller[i] = 127;
+		view->latched.prevcontroller[i] = 127;
+	}
+	for (int i = 0; i < 2; i++)
+	{
+		view->curstate.blending[i] = 127;
+		view->latched.prevblending[i] = 127;
+	}
 
 	if (s_bAnimDirty)
 	{
