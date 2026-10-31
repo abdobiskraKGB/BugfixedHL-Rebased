@@ -42,7 +42,7 @@ bool SameName(const char *a, const char *b)
 	return a && V_stricmp(a, b) == 0;
 }
 
-bool ParseColor(const char *text, Color &out)
+bool ParseOverlayColor(const char *text, Color &out)
 {
 	int r, g, b, a = 255;
 	if (!text || sscanf(text, "%d %d %d %d", &r, &g, &b, &a) < 3)
@@ -185,8 +185,8 @@ private:
 			fg = scheme->GetColor("WindowFgColor", fg);
 			bg = scheme->GetColor("WindowBgColor", bg);
 		}
-		ParseColor(con_arabic_preview_fg.GetString(), fg);
-		ParseColor(con_arabic_preview_bg.GetString(), bg);
+		ParseOverlayColor(con_arabic_preview_fg.GetString(), fg);
+		ParseOverlayColor(con_arabic_preview_bg.GetString(), bg);
 		bg[3] = 255; // the native text underneath must not shine through
 	}
 
