@@ -7,6 +7,7 @@
 #include "client_vgui.h"
 #include "gameui_viewport.h"
 #include "gameui_test_panel.h"
+#include "console_arabic_preview.h"
 #include "options/adv_options_dialog.h"
 
 CON_COMMAND(gameui_cl_open_test_panel, "Opens a test panel for client GameUI")
@@ -24,10 +25,12 @@ CGameUIViewport::CGameUIViewport()
 	SetScheme(vgui2::scheme()->LoadSchemeFromFile(VGUI2_ROOT_DIR "resource/ClientSourceScheme.res", "ClientSourceScheme"));
 	SetProportional(false);
 	SetSize(0, 0);
+	ConsoleArabicPreview_Init(this);
 }
 
 CGameUIViewport::~CGameUIViewport()
 {
+	ConsoleArabicPreview_Shutdown();
 	Assert(m_sInstance);
 	m_sInstance = nullptr;
 }
