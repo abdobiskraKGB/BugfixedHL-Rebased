@@ -64,6 +64,12 @@
 		"command" "OpenServerBrowser"
 		"notsingle" "1"
 	}
+	"10b"
+	{
+		"label" "Join Last Server"
+		"command" "engine joinlast"
+		"notsingle" "1"
+	}
 	"11"
 	{
 		"label" "#GameUI_GameMenu_CreateServer"
