@@ -26,6 +26,12 @@
 //   10033ca8: push 0x100b0ae8     ; next statement prints the line break
 // If any byte differs (another GameUI build) nothing is patched.
 //
+// Third redirect: GameUI's "auto-complete when a space is typed" (OnTextChanged calls OnAutoComplete)
+//   10033ac8: push ebx ; mov ecx,esi ; mov [esi+0x134],ebx
+//   10033ad1: call 0x100338e0     ; CGameConsoleDialog::OnAutoComplete(bool) (thiscall, ret 4)
+//   10033ad6: push ebp ; mov ecx,esi
+// It takes the FIRST item of the completion list, which is not the exact command you typed.
+//
 // Second redirect: the same handler sends the typed command to the engine right before the echo:
 //   10033c85: lea eax,[esp+8] ; push eax ; call [ecx+0x50] (engine->pfnClientCmd) ; add esp,4
 // "name <arabic>" and "say <arabic>" are converted to the shaped form BEFORE they reach the engine, so
@@ -34,6 +40,10 @@
 extern ConVar hud_chat_arabic_name;
 extern ConVar hud_chat_arabic_send;
 void ChatTranslate_SendLine(const char *text, bool team); // hud/chat.cpp
+
+static ConVar con_autocomplete_space("con_autocomplete_space", "0", FCVAR_BHL_ARCHIVE,
+	"1 = typing a space after a command replaces it with the first matching name (stock GameUI behavior, "
+	"e.g. \"model \" becomes \"modelmenu \"). 0 = leave the typed command alone. Tab completion is not affected.");
 
 static ConVar con_arabic_echo("con_arabic_echo", "1", FCVAR_BHL_ARCHIVE,
 	"Show Arabic commands echoed in the console history joined and in the right order (0 = off)");
@@ -49,12 +59,24 @@ constexpr uint8_t SUBMIT_CODE_BEFORE[] = { 0x8D, 0x44, 0x24, 0x08, 0x50 }; // le
 constexpr uint8_t SUBMIT_CODE[] = { 0xFF, 0x51, 0x50, 0x83, 0xC4, 0x04 }; // call [ecx+0x50] ; add esp,4
 constexpr uint8_t SUBMIT_CODE_AFTER[] = { 0x8B, 0xCE }; // mov ecx,esi
 
+constexpr uintptr_t AUTOCOMPLETE_FN_RVA = 0x338E0;
+constexpr uintptr_t AUTOCOMPLETE_CALL_RVA = 0x33AD1;
+constexpr uint8_t AUTOCOMPLETE_CODE_BEFORE[] = { 0x53, 0x8B, 0xCE, 0x89, 0x9E, 0x34, 0x01, 0x00, 0x00 };
+constexpr uint8_t AUTOCOMPLETE_CODE_AFTER[] = { 0x55, 0x8B, 0xCE };
+constexpr uint8_t AUTOCOMPLETE_PROLOGUE[] = { 0x81, 0xEC, 0x00, 0x01, 0x00, 0x00, 0x53, 0x56 };
+
 using PrintFn = void(__thiscall *)(void *, const char *);
+using AutoCompleteFn = void(__thiscall *)(void *, int);
 
 PrintFn s_fnPrint = nullptr;
 uint8_t *s_pCallSite = nullptr;
 int32_t s_iOriginalRel = 0;
 int32_t s_iHookedRel = 0;
+
+AutoCompleteFn s_fnAutoComplete = nullptr;
+uint8_t *s_pAutoCompleteSite = nullptr;
+int32_t s_iAutoCompleteOriginalRel = 0;
+int32_t s_iAutoCompleteHookedRel = 0;
 
 uint8_t *s_pSubmitSite = nullptr;
 uint8_t s_SubmitOriginal[sizeof(SUBMIT_CODE)] = {};
@@ -218,16 +240,74 @@ bool WriteRel32(uint8_t *callSite, int32_t rel)
 	VirtualProtect(callSite + 1, 4, oldProtect, &ignored);
 	return true;
 }
+
+void __fastcall HookedAutoComplete(void *thisptr, void * /*edx*/, int reverse)
+{
+	// Only the "space typed" caller is redirected; Tab still completes through its own call site
+	if (con_autocomplete_space.GetBool())
+		s_fnAutoComplete(thisptr, reverse);
+}
+
+bool InstallAutoCompleteHook(uint8_t *base)
+{
+	uint8_t *site = base + AUTOCOMPLETE_CALL_RVA;
+	uint8_t *function = base + AUTOCOMPLETE_FN_RVA;
+	const size_t before = sizeof(AUTOCOMPLETE_CODE_BEFORE);
+	const size_t after = sizeof(AUTOCOMPLETE_CODE_AFTER);
+
+	if (IsBadReadPtr(site - before, before + 5 + after) || IsBadReadPtr(function, sizeof(AUTOCOMPLETE_PROLOGUE)))
+		return false;
+
+	int32_t rel = 0;
+	memcpy(&rel, site + 1, sizeof(rel));
+
+	if (memcmp(site - before, AUTOCOMPLETE_CODE_BEFORE, before) != 0 || site[0] != 0xE8 ||
+	    site + 5 + rel != function || memcmp(site + 5, AUTOCOMPLETE_CODE_AFTER, after) != 0 ||
+	    memcmp(function, AUTOCOMPLETE_PROLOGUE, sizeof(AUTOCOMPLETE_PROLOGUE)) != 0)
+		return false;
+
+	s_fnAutoComplete = reinterpret_cast<AutoCompleteFn>(function);
+	s_iAutoCompleteOriginalRel = rel;
+	s_iAutoCompleteHookedRel = static_cast<int32_t>(reinterpret_cast<uint8_t *>(&HookedAutoComplete) - (site + 5));
+
+	if (!WriteRel32(site, s_iAutoCompleteHookedRel))
+	{
+		s_fnAutoComplete = nullptr;
+		return false;
+	}
+
+	s_pAutoCompleteSite = site;
+	return true;
+}
+
+void RemoveAutoCompleteHook()
+{
+	if (!s_pAutoCompleteSite)
+		return;
+
+	int32_t current = 0;
+	if (!IsBadReadPtr(s_pAutoCompleteSite + 1, 4))
+		memcpy(&current, s_pAutoCompleteSite + 1, sizeof(current));
+
+	if (current == s_iAutoCompleteHookedRel)
+		WriteRel32(s_pAutoCompleteSite, s_iAutoCompleteOriginalRel);
+
+	s_pAutoCompleteSite = nullptr;
+	s_fnAutoComplete = nullptr;
+}
+
 }
 
 bool ConsoleEchoHook_Install(void *hGameUI)
 {
-	if (s_pCallSite || s_pSubmitSite || !hGameUI)
+	if (s_pCallSite || s_pSubmitSite || s_pAutoCompleteSite || !hGameUI)
 		return false;
 
 	uint8_t *base = reinterpret_cast<uint8_t *>(hGameUI);
 
-	// Independent of the echo fix below; a different GameUI build simply skips it
+	// Independent hooks: a different GameUI build simply skips the ones that do not match
+	if (!InstallAutoCompleteHook(base))
+		gEngfuncs.Con_DPrintf("Console autocomplete: unknown GameUI build, space-autocomplete switch disabled.\n");
 	if (!InstallSubmitHook(base))
 		gEngfuncs.Con_DPrintf("Console submit: unknown GameUI build, Arabic name/say fix disabled.\n");
 	uint8_t *print = base + PRINT_RVA;
@@ -271,6 +351,7 @@ bool ConsoleEchoHook_Install(void *hGameUI)
 void ConsoleEchoHook_Remove()
 {
 	RemoveSubmitHook();
+	RemoveAutoCompleteHook();
 
 	if (!s_pCallSite)
 		return;
