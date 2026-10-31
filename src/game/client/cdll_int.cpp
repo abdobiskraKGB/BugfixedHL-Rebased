@@ -51,6 +51,7 @@ CHud gHUD;
 void InitInput(void);
 void ShutdownInput();
 void IN_OnNewSession();
+void LastServer_Update();
 
 #ifdef _WIN32
 void CrashHandler_InstallShutdownHook();
@@ -290,6 +291,7 @@ int CL_DLLEXPORT HUD_VidInit(void)
 	g_pViewport->VidInit();
 	gHUD.VidInit();
 	IN_OnNewSession();
+	LastServer_Update();
 	g_StudioRenderer.InitOnConnect();
 	PM_ResetBHopDetection();
 	PM_ResetUseSlowDownDetection();

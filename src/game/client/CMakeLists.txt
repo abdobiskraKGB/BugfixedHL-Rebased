@@ -216,6 +216,7 @@ set( SOURCE_FILES
 	interpolation.h
 	kbutton.h
 	model_preview.cpp
+	last_server.cpp
 	model_preview.h
 	net.h
 	opengl.cpp
