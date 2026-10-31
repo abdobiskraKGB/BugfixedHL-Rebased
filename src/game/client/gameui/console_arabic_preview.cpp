@@ -33,6 +33,7 @@ constexpr int POLL_INTERVAL_MS = 50;
 constexpr int MAX_TREE_DEPTH = 12;
 constexpr int MAX_TREE_PANELS = 512;
 constexpr size_t MAX_QUERY_CHARS = 4096;
+constexpr int MAX_NAME_TREE_PANELS = 2000;
 // GameUI answers "GetText" with GetText(wbuf, 255 BYTES) = at most ~125 characters (verified in the
 // shipped GameUI.dll). A text this long may be cut, so the real input line must stay visible.
 constexpr size_t LEGACY_QUERY_LIMIT = 120;
@@ -110,6 +111,115 @@ void FindEntry(vgui2::VPANEL panel, int depth, int &budget, EntrySearch &best)
 		FindEntry(g_pVGuiPanel->GetChild(panel, i), depth + 1, budget, best);
 }
 
+vgui2::HFont GetPreviewFont(vgui2::VPANEL panel)
+{
+	// Reuse the font that already renders this mod's Arabic chat.
+	auto chat = vgui2::scheme()->GetScheme("ChatScheme");
+	if (chat)
+	{
+		if (auto scheme = vgui2::scheme()->GetIScheme(chat))
+		{
+			if (auto font = scheme->GetFont("ChatFont", false))
+				return font;
+		}
+	}
+	if (auto scheme = vgui2::scheme()->GetIScheme(g_pVGuiPanel->GetScheme(panel)))
+		return scheme->GetFont("Default", false);
+	return 0;
+}
+
+// The input lines use the old GameUI scheme (WindowBgColor / WindowFgColor)
+void GetPreviewColors(vgui2::VPANEL entry, Color &fg, Color &bg)
+{
+	fg = Color(235, 245, 220, 255);
+	bg = Color(28, 34, 26, 255);
+	if (auto scheme = vgui2::scheme()->GetIScheme(g_pVGuiPanel->GetScheme(entry)))
+	{
+		fg = scheme->GetColor("WindowFgColor", fg);
+		bg = scheme->GetColor("WindowBgColor", bg);
+	}
+	ParseOverlayColor(con_arabic_preview_fg.GetString(), fg);
+	ParseOverlayColor(con_arabic_preview_bg.GetString(), bg);
+	bg[3] = 255; // the native text underneath must not shine through
+}
+
+// Asks a GameUI TextEntry for its text through IPanel::RequestInfo (never through a guessed layout).
+// GoldSrc KeyValues has virtual methods/deleteThis for crossing module boundaries. KeyValuesAD owns
+// the query; never free the text pointer returned by GetWString.
+const char *QueryEntryText(vgui2::VPANEL entry, std::wstring &out)
+{
+	static const wchar_t s_wszMissing[] = L"\x01<none>";
+	KeyValuesAD query("GetText");
+	if (!g_pVGuiPanel->RequestInfo(entry, query))
+		return "this GameUI does not answer GetText; no unsafe fallback attempted";
+	const wchar_t *text = query->GetWString("text", s_wszMissing);
+	if (text == s_wszMissing || !text)
+		return "this GameUI does not provide the text as Unicode; no unsafe fallback attempted";
+	size_t length = 0;
+	while (length < MAX_QUERY_CHARS && text[length])
+		++length;
+	if (length == MAX_QUERY_CHARS)
+		return "text query exceeded the preview size limit";
+	out.assign(text, length);
+	return nullptr;
+}
+
+// Visible panel with the given name (breadth is limited so a big server list can't slow this down)
+vgui2::VPANEL FindByName(vgui2::VPANEL panel, const char *name, int depth, int &budget)
+{
+	if (!panel || depth > MAX_TREE_DEPTH || budget-- <= 0 || !g_pVGuiPanel->IsVisible(panel))
+		return 0;
+	if (SameName(g_pVGuiPanel->GetName(panel), name))
+		return panel;
+	const int count = g_pVGuiPanel->GetChildCount(panel);
+	for (int i = 0; i < count && budget > 0; ++i)
+	{
+		if (auto found = FindByName(g_pVGuiPanel->GetChild(panel, i), name, depth + 1, budget))
+			return found;
+	}
+	return 0;
+}
+
+// Draws the shaped text (with a blinking caret and the newest characters if it doesn't fit)
+std::wstring FitOverlayText(const std::wstring &body, vgui2::HFont font, int available)
+{
+	const bool caretOn = (static_cast<int>(gEngfuncs.GetAbsoluteTime() * 2.0) % 2) == 0;
+	auto measure = [font](const std::wstring &str) -> int {
+		int total = 0;
+		for (wchar_t ch2 : str)
+		{
+			int a, b, c;
+			vgui2::surface()->GetCharABCwide(font, ch2, a, b, c);
+			total += a + b + c;
+		}
+		return total;
+	};
+	std::wstring shown;
+	std::wstring logical = body;
+	for (;;)
+	{
+		shown = ConsoleArabicText::MakePreviewWithCaret(logical, caretOn).visual;
+		// Keep the newest characters visible when the text is wider than the box
+		if (logical.size() <= 1 || measure(shown) <= available)
+			break;
+		logical.erase(0, 1);
+	}
+	return shown;
+}
+
+vgui2::Label *CreateOverlayLabel(const char *name)
+{
+	auto label = new vgui2::Label(nullptr, name, L"");
+	label->SetMouseInputEnabled(false);
+	label->SetKeyBoardInputEnabled(false);
+	label->SetPaintBackgroundEnabled(true);
+	label->SetPaintBorderEnabled(false);
+	label->SetContentAlignment(vgui2::Label::a_west);
+	label->SetTextInset(4, 0);
+	label->SetZPos(1000);
+	return label;
+}
+
 class CConsoleArabicPreview : public vgui2::Panel
 {
 	DECLARE_CLASS_SIMPLE(CConsoleArabicPreview, vgui2::Panel);
@@ -129,24 +239,32 @@ public:
 	~CConsoleArabicPreview() override
 	{
 		vgui2::ivgui()->RemoveTickSignal(GetVPanel());
-		// The label belongs to a foreign parent. A DHANDLE detects if GameUI
-		// already destroyed it, and explicit deletion prevents callbacks into
-		// an unloaded client DLL if the console survives client shutdown.
+		// The labels belong to foreign parents. A DHANDLE detects if GameUI
+		// already destroyed one, and explicit deletion prevents callbacks into
+		// an unloaded client DLL if GameUI survives client shutdown.
 		if (m_preview.Get())
 			delete m_preview.Get();
 		m_preview = nullptr;
+		if (m_nameLabel.Get())
+			delete m_nameLabel.Get();
+		m_nameLabel = nullptr;
 	}
 
-	void OnTick() override { Refresh(false); }
+	void OnTick() override
+	{
+		RefreshConsole(false);
+		RefreshNameEntry();
+	}
 
 	void PrintStatus()
 	{
-		Refresh(true);
+		RefreshConsole(true);
 		ConPrintf("Arabic console preview: %s\n", m_status.c_str());
 		ConPrintf("Enabled: %d, overlay: %d. Reads the input through IPanel::RequestInfo(GetText); no input hooks.\n",
 			con_arabic_preview.GetBool() ? 1 : 0, con_arabic_preview_overlay.GetBool() ? 1 : 0);
 		ConPrintf("This GameUI returns at most ~%d characters; longer lines are left to the native input.\n",
 			(int)LEGACY_QUERY_LIMIT);
+		ConPrintf("Player name field (Options > Multiplayer): %s\n", m_nameStatus.c_str());
 		ConPrintf("If the entry is not found, capture vgui_dumptree while the console is open.\n");
 	}
 
@@ -158,39 +276,69 @@ private:
 			m_preview->SetVisible(false);
 	}
 
-	vgui2::HFont GetPreviewFont(vgui2::VPANEL console)
+	void HideName(const char *status)
 	{
-		// Reuse the font that already renders this mod's Arabic chat.
-		auto chat = vgui2::scheme()->GetScheme("ChatScheme");
-		if (chat)
-		{
-			if (auto scheme = vgui2::scheme()->GetIScheme(chat))
-			{
-				if (auto font = scheme->GetFont("ChatFont", false))
-					return font;
-			}
-		}
-		if (auto scheme = vgui2::scheme()->GetIScheme(g_pVGuiPanel->GetScheme(console)))
-			return scheme->GetFont("Default", false);
-		return 0;
+		m_nameStatus = status;
+		if (m_nameLabel.Get())
+			m_nameLabel->SetVisible(false);
 	}
 
-	// The console input uses the old GameUI scheme (WindowBgColor / WindowFgColor)
-	void GetPreviewColors(vgui2::VPANEL entry, Color &fg, Color &bg)
+	// Options > Multiplayer > "Player name": same idea as the console, drawn over the field itself
+	void RefreshNameEntry()
 	{
-		fg = Color(235, 245, 220, 255);
-		bg = Color(28, 34, 26, 255);
-		if (auto scheme = vgui2::scheme()->GetIScheme(g_pVGuiPanel->GetScheme(entry)))
+		if (!g_pVGuiPanel || !g_pEngineVGui || !vgui2::surface() || !con_arabic_preview.GetBool())
 		{
-			fg = scheme->GetColor("WindowFgColor", fg);
-			bg = scheme->GetColor("WindowBgColor", bg);
+			HideName("disabled");
+			return;
 		}
-		ParseOverlayColor(con_arabic_preview_fg.GetString(), fg);
-		ParseOverlayColor(con_arabic_preview_bg.GetString(), bg);
-		bg[3] = 255; // the native text underneath must not shine through
+		int budget = MAX_NAME_TREE_PANELS;
+		const auto entry = FindByName(g_pEngineVGui->GetPanel(PANEL_ROOT), "NameEntry", 0, budget);
+		if (!entry)
+		{
+			HideName("options page not visible");
+			return;
+		}
+		std::wstring body;
+		if (const char *error = QueryEntryText(entry, body))
+		{
+			HideName(error);
+			return;
+		}
+		if (!ConsoleArabicText::MakePreview(body).containsArabic)
+		{
+			HideName("waiting for Arabic input");
+			return;
+		}
+		const auto parent = g_pVGuiPanel->GetParent(entry);
+		const auto font = GetPreviewFont(entry);
+		int x, y, w, h;
+		g_pVGuiPanel->GetPos(entry, x, y);
+		g_pVGuiPanel->GetSize(entry, w, h);
+		if (!parent || !font || w <= 8 || h <= 0)
+		{
+			HideName("name field geometry unavailable");
+			return;
+		}
+
+		Color fg, bg;
+		GetPreviewColors(entry, fg, bg);
+		const std::wstring shown = FitOverlayText(body, font, w - 8);
+
+		if (!m_nameLabel.Get())
+			m_nameLabel = CreateOverlayLabel("NameArabicPreviewLabel");
+		if (g_pVGuiPanel->GetParent(m_nameLabel->GetVPanel()) != parent)
+			m_nameLabel->SetParent(parent);
+		m_nameLabel->SetFont(font);
+		m_nameLabel->SetFgColor(fg);
+		m_nameLabel->SetBgColor(bg);
+		m_nameLabel->SetBounds(x, y, w, h);
+		m_nameLabel->SetText(shown.c_str());
+		m_nameLabel->SetVisible(true);
+		m_nameLabel->MoveToFront();
+		m_nameStatus = "active";
 	}
 
-	void Refresh(bool diagnostic)
+	void RefreshConsole(bool diagnostic)
 	{
 		if (!g_pVGuiPanel || !g_pEngineVGui || !vgui2::surface())
 		{
@@ -218,31 +366,13 @@ private:
 			return;
 		}
 
-		// GoldSrc KeyValues has virtual methods/deleteThis for crossing module
-		// boundaries. KeyValuesAD owns the query; never free the text pointer
-		// returned by GetWString and never cast the entry to TextEntry*.
-		static const wchar_t s_wszMissing[] = L"\x01<none>";
-		KeyValuesAD query("GetText");
-		if (!g_pVGuiPanel->RequestInfo(entry.panel, query))
+		std::wstring body;
+		if (const char *error = QueryEntryText(entry.panel, body))
 		{
-			Hide("this GameUI does not answer GetText; no unsafe fallback attempted");
+			Hide(error);
 			return;
 		}
-		const wchar_t *text = query->GetWString("text", s_wszMissing);
-		if (text == s_wszMissing || !text)
-		{
-			Hide("this GameUI does not provide the text as Unicode; no unsafe fallback attempted");
-			return;
-		}
-		size_t length = 0;
-		while (length < MAX_QUERY_CHARS && text[length])
-			++length;
-		if (length == MAX_QUERY_CHARS)
-		{
-			Hide("text query exceeded the preview size limit");
-			return;
-		}
-		std::wstring body(text, length);
+		const size_t length = body.size();
 		if (!ConsoleArabicText::MakePreview(body).containsArabic || !con_arabic_preview.GetBool())
 		{
 			Hide("Unicode text query OK; waiting for Arabic input (or preview disabled)");
@@ -281,46 +411,22 @@ private:
 		}
 
 		// Visual text; in overlay mode it carries its own blinking caret at the end of the input
-		const bool caretOn = (static_cast<int>(gEngfuncs.GetAbsoluteTime() * 2.0) % 2) == 0;
-		const int available = ew - 8 - (overlay ? 0 : 60);
-		auto measure = [font](const std::wstring &str) -> int {
-			int total = 0;
-			for (wchar_t ch2 : str)
-			{
-				int a, b, c;
-				vgui2::surface()->GetCharABCwide(font, ch2, a, b, c);
-				total += a + b + c;
-			}
-			return total;
-		};
 		std::wstring shown;
-		std::wstring logical = body;
-		for (;;)
+		if (overlay)
 		{
-			shown = overlay ? ConsoleArabicText::MakePreviewWithCaret(logical, caretOn).visual
-			                : ConsoleArabicText::MakePreview(logical).visual;
-			// Keep the newest characters visible when the text is wider than the box
-			if (logical.size() <= 1 || measure(shown) <= available)
-				break;
-			logical.erase(0, 1);
+			shown = FitOverlayText(body, font, ew - 8);
 		}
-		if (!overlay)
+		else
+		{
+			shown = ConsoleArabicText::MakePreview(body).visual;
 			shown = std::wstring(possiblePrefix ? L"RTL [partial]: " : L"RTL: ") + shown;
+		}
 
 		Color fg, bg;
 		GetPreviewColors(entry.panel, fg, bg);
 
 		if (!m_preview.Get())
-		{
-			m_preview = new vgui2::Label(nullptr, "ConsoleArabicPreviewLabel", L"");
-			m_preview->SetMouseInputEnabled(false);
-			m_preview->SetKeyBoardInputEnabled(false);
-			m_preview->SetPaintBackgroundEnabled(true);
-			m_preview->SetPaintBorderEnabled(false);
-			m_preview->SetContentAlignment(vgui2::Label::a_west);
-			m_preview->SetTextInset(4, 0);
-			m_preview->SetZPos(1000);
-		}
+			m_preview = CreateOverlayLabel("ConsoleArabicPreviewLabel");
 		if (g_pVGuiPanel->GetParent(m_preview->GetVPanel()) != console)
 			m_preview->SetParent(console);
 		m_preview->SetFont(font);
@@ -334,7 +440,9 @@ private:
 	}
 
 	vgui2::DHANDLE<vgui2::Label> m_preview;
+	vgui2::DHANDLE<vgui2::Label> m_nameLabel;
 	std::string m_status = "waiting for console";
+	std::string m_nameStatus = "waiting";
 };
 
 vgui2::DHANDLE<CConsoleArabicPreview> s_controller;
