@@ -376,14 +376,14 @@ public:
 	}
 
 private:
-	int RowHeight() const
+	int RowHeight()
 	{
 		int sw, sh;
 		vgui2::surface()->GetScreenSize(sw, sh);
 		return std::max(22, sh / 30);
 	}
 
-	int PerPage() const
+	int PerPage()
 	{
 		const int usable = GetTall() - 34 - 44;
 		return std::max(4, usable / (RowHeight() + 3));
