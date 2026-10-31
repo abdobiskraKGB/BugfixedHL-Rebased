@@ -12,6 +12,7 @@
 
 #include "hud.h"
 #include "console.h"
+#include "console_echo_hook.h"
 
 namespace console
 {
@@ -180,6 +181,8 @@ void console::HudShutdown()
 	s_ConColor = &s_StubColor;
 	s_ConDColor = &s_StubDColor;
 
+	// Our code must not stay referenced from GameUI after this module is unloaded
+	ConsoleEchoHook_Remove();
 	UnloadGameUI();
 }
 
@@ -282,6 +285,9 @@ void console::HookConsoleColor()
 		ConPrintf(ConColor::Red, "HookConsoleColor: console not initialized\n");
 		return;
 	}
+
+	// Arabic commands echoed in the history (separate from the color hook, verified by code bytes)
+	ConsoleEchoHook_Install(s_hGameUI);
 
 	// Read console colors from the GameUI scheme
 	ReadSchemeColors();

@@ -266,6 +266,7 @@ if( PLATFORM_WINDOWS )
 	set( SOURCE_FILES
 		${SOURCE_FILES}
 		engine_patches_windows.cpp
+		console_echo_hook_windows.cpp
 		net_windows.cpp
 	)
 elseif( PLATFORM_LINUX )
