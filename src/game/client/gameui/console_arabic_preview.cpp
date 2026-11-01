@@ -18,6 +18,8 @@
 #include "console_arabic_preview.h"
 #include "console_arabic_text.h"
 
+bool LastServer_Has(); // last_server.cpp
+
 static ConVar con_arabic_preview("con_arabic_preview", "1", FCVAR_BHL_ARCHIVE,
 	"Show Arabic text typed in the console correctly joined and ordered (0 = off)");
 static ConVar con_arabic_preview_overlay("con_arabic_preview_overlay", "1", FCVAR_BHL_ARCHIVE,
@@ -180,6 +182,27 @@ vgui2::VPANEL FindByName(vgui2::VPANEL panel, const char *name, int depth, int &
 	return 0;
 }
 
+// Main menu entries are panels named "GameMenuItem"; the one with the given text is returned
+// (hidden items are searched too, the menu may be closed)
+vgui2::VPANEL FindGameMenuItem(vgui2::VPANEL panel, const wchar_t *text, int depth, int &budget)
+{
+	if (!panel || depth > MAX_TREE_DEPTH || budget-- <= 0)
+		return 0;
+	if (SameName(g_pVGuiPanel->GetName(panel), "GameMenuItem"))
+	{
+		std::wstring label;
+		if (!QueryEntryText(panel, label) && label == text)
+			return panel;
+	}
+	const int count = g_pVGuiPanel->GetChildCount(panel);
+	for (int i = 0; i < count && budget > 0; ++i)
+	{
+		if (auto found = FindGameMenuItem(g_pVGuiPanel->GetChild(panel, i), text, depth + 1, budget))
+			return found;
+	}
+	return 0;
+}
+
 // Draws the shaped text (with a blinking caret and the newest characters if it doesn't fit)
 std::wstring FitOverlayText(const std::wstring &body, vgui2::HFont font, int available, bool &rtl)
 {
@@ -254,6 +277,7 @@ public:
 	{
 		RefreshConsole(false);
 		RefreshNameEntry();
+		RefreshJoinLastItem();
 	}
 
 	void PrintStatus()
@@ -265,6 +289,7 @@ public:
 		ConPrintf("This GameUI returns at most ~%d characters; longer lines are left to the native input.\n",
 			(int)LEGACY_QUERY_LIMIT);
 		ConPrintf("Player name field (Options > Multiplayer): %s\n", m_nameStatus.c_str());
+		ConPrintf("Join Last Server menu entry: %s\n", m_joinLastStatus.c_str());
 		ConPrintf("If the entry is not found, capture vgui_dumptree while the console is open.\n");
 	}
 
@@ -281,6 +306,43 @@ private:
 		m_nameStatus = status;
 		if (m_nameLabel.Get())
 			m_nameLabel->SetVisible(false);
+	}
+
+	// "Join Last Server" in the main menu only exists once a server was joined (cl_lastserver is archived).
+	// GameMenu.res cannot depend on a cvar, so the entry is hidden through IPanel until then.
+	void RefreshJoinLastItem()
+	{
+		if (!g_pVGuiPanel || !g_pEngineVGui)
+			return;
+
+		const bool wanted = LastServer_Has();
+		if (wanted && !m_bJoinLastHidden)
+			return; // GameUI manages the visibility of the entry itself
+
+		if ((m_iJoinLastTick++ % 2) != 0 && !wanted)
+			return;
+
+		int budget = MAX_NAME_TREE_PANELS;
+		const auto item = FindGameMenuItem(g_pEngineVGui->GetPanel(PANEL_ROOT), L"Join Last Server", 0, budget);
+		if (!item)
+		{
+			m_joinLastStatus = "menu entry not found (it may not answer GetText on this GameUI)";
+			return;
+		}
+
+		if (wanted)
+		{
+			g_pVGuiPanel->SetVisible(item, true);
+			m_bJoinLastHidden = false;
+			m_joinLastStatus = "shown (a server is remembered)";
+		}
+		else
+		{
+			if (g_pVGuiPanel->IsVisible(item))
+				g_pVGuiPanel->SetVisible(item, false);
+			m_bJoinLastHidden = true;
+			m_joinLastStatus = "hidden (no server remembered yet)";
+		}
 	}
 
 	// Options > Multiplayer > "Player name": same idea as the console, drawn over the field itself
@@ -447,6 +509,9 @@ private:
 	vgui2::DHANDLE<vgui2::Label> m_nameLabel;
 	std::string m_status = "waiting for console";
 	std::string m_nameStatus = "waiting";
+	std::string m_joinLastStatus = "not checked";
+	bool m_bJoinLastHidden = false;
+	int m_iJoinLastTick = 0;
 };
 
 vgui2::DHANDLE<CConsoleArabicPreview> s_controller;

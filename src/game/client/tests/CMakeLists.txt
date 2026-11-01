@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.15)
+project(ConsoleArabicPreviewTests LANGUAGES CXX)
+
+add_executable(console_arabic_text_test console_arabic_text_test.cpp)
+target_compile_features(console_arabic_text_test PRIVATE cxx_std_17)
+enable_testing()
+add_test(NAME console_arabic_text COMMAND console_arabic_text_test)

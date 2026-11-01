@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <functional>
+#include <map>
+#include <FileSystem.h>
 #include <string>
 #include <utility>
 #include <vgui/IImage.h>
@@ -1735,17 +1737,61 @@ void CScorePanel::EnsureSpectatorSection(int side)
 	CreateSectionIn(side == 1 ? m_pListRight : m_pListLeft, TEAM_SPECTATOR);
 }
 
-int CScorePanel::GetTeamImage(int nTeamID)
+// Picture named after the team: ui/gfx/teams/<team name>.tga (for example blue.tga, red.tga, gordon.tga).
+// Used when ScorePanel.res has no picture for the team number. With mp_teamplay 1 and no team list the
+// team name is the player model, so putting one tga per model there gives every team its own banner.
+static int LoadTeamImageByName(const char *teamName)
 {
-	switch (nTeamID)
+	static std::map<std::string, int> s_Cache;
+
+	if (!teamName || !teamName[0])
+		return -1;
+
+	std::string key;
+	for (const char *c = teamName; *c && key.size() < 31; ++c)
 	{
-	case 1: return m_iTeamImage1;
-	case 2: return m_iTeamImage2;
-	case 3: return m_iTeamImage3;
-	case 4: return m_iTeamImage4;
+		char ch = *c;
+		if (ch >= 'A' && ch <= 'Z')
+			ch = ch - 'A' + 'a';
+		if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-')
+			key += ch;
+		else
+			return -1; // never build a path from unusual characters
 	}
 
-	return -1;
+	auto it = s_Cache.find(key);
+	if (it != s_Cache.end())
+		return it->second;
+
+	int texture = -1;
+	const std::string path = std::string(VGUI2_ROOT_DIR "gfx/teams/") + key;
+	if (g_pFullFileSystem->FileExists((path + ".tga").c_str()))
+	{
+		texture = vgui2::surface()->CreateNewTextureID(true);
+		vgui2::surface()->DrawSetTextureFile(texture, path.c_str(), true, false);
+	}
+
+	s_Cache[key] = texture;
+	return texture;
+}
+
+int CScorePanel::GetTeamImage(int nTeamID)
+{
+	int configured = -1;
+
+	switch (nTeamID)
+	{
+	case 1: configured = m_iTeamImage1; break;
+	case 2: configured = m_iTeamImage2; break;
+	case 3: configured = m_iTeamImage3; break;
+	case 4: configured = m_iTeamImage4; break;
+	}
+
+	if (configured != -1)
+		return configured;
+
+	CTeamInfo *ti = GetTeamInfo(nTeamID);
+	return ti ? LoadTeamImageByName(ti->GetName()) : -1;
 }
 
 int CScorePanel::GetSpectatorSide(CPlayerInfo *pi, int current)

@@ -16,6 +16,13 @@
 
 static ConVar cl_lastserver("cl_lastserver", "", FCVAR_BHL_ARCHIVE, "Address of the last multiplayer server you joined (used by joinlast)");
 
+// True once a server has been remembered (menu entry visibility)
+bool LastServer_Has()
+{
+	const char *address = cl_lastserver.GetString();
+	return address && address[0];
+}
+
 // Called on every map load / connection (HUD_VidInit)
 void LastServer_Update()
 {
