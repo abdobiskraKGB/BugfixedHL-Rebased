@@ -26,6 +26,15 @@
 //   10033ca8: push 0x100b0ae8     ; next statement prints the line break
 // If any byte differs (another GameUI build) nothing is patched.
 //
+// Fourth redirect: Options > Multiplayer > "Player name" (a CCvarTextEntry bound to the cvar "name").
+// Its ApplyChanges() reads the text with GetText(char *, 0x40) and sends it to the engine, either with
+// Cvar_Set or as 'name "<text>"'. Shaping the buffer right after that GetText makes the engine, and
+// therefore the server, see the shaped name ONCE:
+//   100308dc: mov ecx,esi
+//   100308de: call [eax+0x224]    ; entry->GetText(buffer, 0x40)   (thiscall, ret 8)
+//   100308e4: mov al,[esp+4]
+//   (this+0x138 = the cvar this entry is bound to)
+//
 // Third redirect: GameUI's "auto-complete when a space is typed" (OnTextChanged calls OnAutoComplete)
 //   10033ac8: push ebx ; mov ecx,esi ; mov [esi+0x134],ebx
 //   10033ad1: call 0x100338e0     ; CGameConsoleDialog::OnAutoComplete(bool) (thiscall, ret 4)
@@ -65,13 +74,27 @@ constexpr uint8_t AUTOCOMPLETE_CODE_BEFORE[] = { 0x53, 0x8B, 0xCE, 0x89, 0x9E, 0
 constexpr uint8_t AUTOCOMPLETE_CODE_AFTER[] = { 0x55, 0x8B, 0xCE };
 constexpr uint8_t AUTOCOMPLETE_PROLOGUE[] = { 0x81, 0xEC, 0x00, 0x01, 0x00, 0x00, 0x53, 0x56 };
 
+constexpr uintptr_t NAME_APPLY_FN_RVA = 0x308C0;
+constexpr uintptr_t NAME_APPLY_CALL_RVA = 0x308DE;
+constexpr size_t NAME_ENTRY_CVAR_OFFSET = 0x138;
+constexpr size_t TEXTENTRY_GETTEXT_VTABLE_OFFSET = 0x224;
+constexpr uint8_t NAME_APPLY_PROLOGUE[] = { 0x81, 0xEC, 0x40, 0x01, 0x00, 0x00, 0x56, 0x8B, 0xF1 };
+constexpr uint8_t NAME_APPLY_BEFORE[] = { 0x6A, 0x40, 0x51, 0x8B, 0xCE };
+constexpr uint8_t NAME_APPLY_CODE[] = { 0xFF, 0x90, 0x24, 0x02, 0x00, 0x00 }; // call [eax+0x224]
+constexpr uint8_t NAME_APPLY_AFTER[] = { 0x8A, 0x44, 0x24, 0x04 }; // mov al,[esp+4]
+
 using PrintFn = void(__thiscall *)(void *, const char *);
+using EntryGetTextFn = void(__thiscall *)(void *, char *, int);
 using AutoCompleteFn = void(__thiscall *)(void *, int);
 
 PrintFn s_fnPrint = nullptr;
 uint8_t *s_pCallSite = nullptr;
 int32_t s_iOriginalRel = 0;
 int32_t s_iHookedRel = 0;
+
+uint8_t *s_pNameApplySite = nullptr;
+uint8_t s_NameApplyOriginal[sizeof(NAME_APPLY_CODE)] = {};
+int32_t s_iNameApplyHookedRel = 0;
 
 AutoCompleteFn s_fnAutoComplete = nullptr;
 uint8_t *s_pAutoCompleteSite = nullptr;
@@ -241,6 +264,84 @@ bool WriteRel32(uint8_t *callSite, int32_t rel)
 	return true;
 }
 
+// The entry is bound to a cvar: either this+0x138 is its name string or a cvar_t whose first field is
+bool IsNameCvarEntry(void *entry)
+{
+	void *bound = *reinterpret_cast<void **>(reinterpret_cast<uint8_t *>(entry) + NAME_ENTRY_CVAR_OFFSET);
+	if (!bound || IsBadReadPtr(bound, 5))
+		return false;
+
+	if (memcmp(bound, "name", 5) == 0)
+		return true;
+
+	const char *inner = *reinterpret_cast<const char **>(bound);
+	return inner && !IsBadReadPtr(inner, 5) && memcmp(inner, "name", 5) == 0;
+}
+
+// Replaces "call [eax+0x224]" (GetText(buffer, size), callee cleans 8 bytes) in the apply routine
+void __fastcall HookedNameEntryGetText(void *thisptr, void * /*edx*/, char *buffer, int size)
+{
+	void **vtable = *reinterpret_cast<void ***>(thisptr);
+	reinterpret_cast<EntryGetTextFn>(vtable[TEXTENTRY_GETTEXT_VTABLE_OFFSET / sizeof(void *)])(thisptr, buffer, size);
+
+	if (!con_arabic_echo.GetBool() || !hud_chat_arabic_name.GetBool() || !buffer || size <= 1 || !IsNameCvarEntry(thisptr))
+		return;
+
+	const std::string visual = ArabicText::ToVisualNameUtf8(buffer, 31);
+	if (visual.empty() || visual == buffer || visual.size() >= static_cast<size_t>(size))
+		return;
+
+	memcpy(buffer, visual.c_str(), visual.size() + 1);
+}
+
+bool InstallNameApplyHook(uint8_t *base)
+{
+	uint8_t *site = base + NAME_APPLY_CALL_RVA;
+	uint8_t *function = base + NAME_APPLY_FN_RVA;
+	const size_t before = sizeof(NAME_APPLY_BEFORE);
+	const size_t after = sizeof(NAME_APPLY_AFTER);
+
+	if (IsBadReadPtr(site - before, before + sizeof(NAME_APPLY_CODE) + after) ||
+	    IsBadReadPtr(function, sizeof(NAME_APPLY_PROLOGUE)))
+		return false;
+
+	if (memcmp(site - before, NAME_APPLY_BEFORE, before) != 0 ||
+	    memcmp(site, NAME_APPLY_CODE, sizeof(NAME_APPLY_CODE)) != 0 ||
+	    memcmp(site + sizeof(NAME_APPLY_CODE), NAME_APPLY_AFTER, after) != 0 ||
+	    memcmp(function, NAME_APPLY_PROLOGUE, sizeof(NAME_APPLY_PROLOGUE)) != 0)
+		return false;
+
+	memcpy(s_NameApplyOriginal, site, sizeof(NAME_APPLY_CODE));
+	s_iNameApplyHookedRel = static_cast<int32_t>(reinterpret_cast<uint8_t *>(&HookedNameEntryGetText) - (site + 5));
+
+	uint8_t patch[sizeof(NAME_APPLY_CODE)];
+	patch[0] = 0xE8; // call rel32
+	memcpy(patch + 1, &s_iNameApplyHookedRel, sizeof(s_iNameApplyHookedRel));
+	patch[5] = 0x90;
+
+	if (!WriteBytes(site, patch, sizeof(patch)))
+		return false;
+
+	s_pNameApplySite = site;
+	return true;
+}
+
+void RemoveNameApplyHook()
+{
+	if (!s_pNameApplySite)
+		return;
+
+	if (!IsBadReadPtr(s_pNameApplySite, sizeof(NAME_APPLY_CODE)) && s_pNameApplySite[0] == 0xE8)
+	{
+		int32_t current = 0;
+		memcpy(&current, s_pNameApplySite + 1, sizeof(current));
+		if (current == s_iNameApplyHookedRel)
+			WriteBytes(s_pNameApplySite, s_NameApplyOriginal, sizeof(NAME_APPLY_CODE));
+	}
+
+	s_pNameApplySite = nullptr;
+}
+
 void __fastcall HookedAutoComplete(void *thisptr, void * /*edx*/, int reverse)
 {
 	// Only the "space typed" caller is redirected; Tab still completes through its own call site
@@ -300,12 +401,14 @@ void RemoveAutoCompleteHook()
 
 bool ConsoleEchoHook_Install(void *hGameUI)
 {
-	if (s_pCallSite || s_pSubmitSite || s_pAutoCompleteSite || !hGameUI)
+	if (s_pCallSite || s_pSubmitSite || s_pAutoCompleteSite || s_pNameApplySite || !hGameUI)
 		return false;
 
 	uint8_t *base = reinterpret_cast<uint8_t *>(hGameUI);
 
 	// Independent hooks: a different GameUI build simply skips the ones that do not match
+	if (!InstallNameApplyHook(base))
+		gEngfuncs.Con_DPrintf("Options name field: unknown GameUI build, Arabic name apply fix disabled.\n");
 	if (!InstallAutoCompleteHook(base))
 		gEngfuncs.Con_DPrintf("Console autocomplete: unknown GameUI build, space-autocomplete switch disabled.\n");
 	if (!InstallSubmitHook(base))
@@ -352,6 +455,7 @@ void ConsoleEchoHook_Remove()
 {
 	RemoveSubmitHook();
 	RemoveAutoCompleteHook();
+	RemoveNameApplyHook();
 
 	if (!s_pCallSite)
 		return;
