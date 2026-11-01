@@ -92,19 +92,24 @@ inline bool LastStrongIsArabic(const std::u32string &codepoints)
 // end of the text. Used when the preview replaces the native input line, whose own caret gets covered.
 // When the text ends in Arabic, a non-joining hamza is appended before shaping so that the caret lands
 // where the next Arabic letter would appear; that hamza is then replaced by the caret.
-inline Preview MakePreviewWithCaret(const std::wstring &logical, bool caretOn)
+inline Preview MakePreviewWithCaret(const std::wstring &logical, bool caretOn, bool *rtlParagraph = nullptr)
 {
 	const std::u32string codepoints = DecodeWide(logical);
+	// Same rule as the chat box: the paragraph direction is decided by the first strong letter
+	const bool rtl = ArabicText::detail::IsRtlParagraph(codepoints);
+	const ArabicText::Dir dir = rtl ? ArabicText::DIR_RTL : ArabicText::DIR_LTR;
+	if (rtlParagraph)
+		*rtlParagraph = rtl;
 	Preview result;
 	result.containsArabic = ArabicText::ContainsArabic(codepoints);
 	const char32_t caret = caretOn ? U'|' : U' ';
 
 	if (result.containsArabic && LastStrongIsArabic(codepoints))
 	{
-		const std::u32string base = ArabicText::ToVisual(codepoints, ArabicText::DIR_LTR);
+		const std::u32string base = ArabicText::ToVisual(codepoints, dir);
 		std::u32string probe = codepoints;
 		probe.push_back(U'\u0621');
-		std::u32string shaped = ArabicText::ToVisual(probe, ArabicText::DIR_LTR);
+		std::u32string shaped = ArabicText::ToVisual(probe, dir);
 
 		// Everything to the right of the inserted glyph is identical to the plain shaping
 		size_t suffix = 0;
@@ -127,7 +132,7 @@ inline Preview MakePreviewWithCaret(const std::wstring &logical, bool caretOn)
 	// Text ends in Latin/neutral (or shaping was unexpected): the caret simply follows the text
 	std::u32string withCaret = codepoints;
 	withCaret.push_back(caret);
-	result.visual = EncodeWide(ArabicText::ToVisual(withCaret, ArabicText::DIR_LTR));
+	result.visual = EncodeWide(ArabicText::ToVisual(withCaret, dir));
 	return result;
 }
 }

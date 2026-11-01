@@ -181,7 +181,7 @@ vgui2::VPANEL FindByName(vgui2::VPANEL panel, const char *name, int depth, int &
 }
 
 // Draws the shaped text (with a blinking caret and the newest characters if it doesn't fit)
-std::wstring FitOverlayText(const std::wstring &body, vgui2::HFont font, int available)
+std::wstring FitOverlayText(const std::wstring &body, vgui2::HFont font, int available, bool &rtl)
 {
 	const bool caretOn = (static_cast<int>(gEngfuncs.GetAbsoluteTime() * 2.0) % 2) == 0;
 	auto measure = [font](const std::wstring &str) -> int {
@@ -198,7 +198,7 @@ std::wstring FitOverlayText(const std::wstring &body, vgui2::HFont font, int ava
 	std::wstring logical = body;
 	for (;;)
 	{
-		shown = ConsoleArabicText::MakePreviewWithCaret(logical, caretOn).visual;
+		shown = ConsoleArabicText::MakePreviewWithCaret(logical, caretOn, &rtl).visual;
 		// Keep the newest characters visible when the text is wider than the box
 		if (logical.size() <= 1 || measure(shown) <= available)
 			break;
@@ -322,12 +322,14 @@ private:
 
 		Color fg, bg;
 		GetPreviewColors(entry, fg, bg);
-		const std::wstring shown = FitOverlayText(body, font, w - 8);
+		bool rtl = false;
+		const std::wstring shown = FitOverlayText(body, font, w - 8, rtl);
 
 		if (!m_nameLabel.Get())
 			m_nameLabel = CreateOverlayLabel("NameArabicPreviewLabel");
 		if (g_pVGuiPanel->GetParent(m_nameLabel->GetVPanel()) != parent)
 			m_nameLabel->SetParent(parent);
+		m_nameLabel->SetContentAlignment(rtl ? vgui2::Label::a_east : vgui2::Label::a_west);
 		m_nameLabel->SetFont(font);
 		m_nameLabel->SetFgColor(fg);
 		m_nameLabel->SetBgColor(bg);
@@ -412,9 +414,10 @@ private:
 
 		// Visual text; in overlay mode it carries its own blinking caret at the end of the input
 		std::wstring shown;
+		bool rtl = false;
 		if (overlay)
 		{
-			shown = FitOverlayText(body, font, ew - 8);
+			shown = FitOverlayText(body, font, ew - 8, rtl);
 		}
 		else
 		{
@@ -429,6 +432,7 @@ private:
 			m_preview = CreateOverlayLabel("ConsoleArabicPreviewLabel");
 		if (g_pVGuiPanel->GetParent(m_preview->GetVPanel()) != console)
 			m_preview->SetParent(console);
+		m_preview->SetContentAlignment(overlay && rtl ? vgui2::Label::a_east : vgui2::Label::a_west);
 		m_preview->SetFont(font);
 		m_preview->SetFgColor(fg);
 		m_preview->SetBgColor(bg);
@@ -467,4 +471,21 @@ CON_COMMAND(con_arabic_preview_status, "Check console Arabic preview support wit
 		s_controller->PrintStatus();
 	else
 		ConPrintf("Arabic console preview is not initialized. Load a map with this client first.\n");
+}
+
+CON_COMMAND(arabic_glyph_test, "Print single Arabic glyphs to find out which ones the console font cannot draw")
+{
+	ConPrintf("Arabic glyph test (each glyph must appear between the brackets):\n");
+	ConPrintf("Alef isolated FE8D : [" "\xEF\xBA\x8D" "]\n");
+	ConPrintf("Alef final FE8E : [" "\xEF\xBA\x8E" "]\n");
+	ConPrintf("Alef base 0627 : [" "\xD8\xA7" "]\n");
+	ConPrintf("Lam initial FEDF : [" "\xEF\xBB\x9F" "]\n");
+	ConPrintf("Lam medial FEE0 : [" "\xEF\xBB\xA0" "]\n");
+	ConPrintf("Lam isolated FEDD : [" "\xEF\xBB\x9D" "]\n");
+	ConPrintf("Lam final FEDE : [" "\xEF\xBB\x9E" "]\n");
+	ConPrintf("Lam base 0644 : [" "\xD9\x84" "]\n");
+	ConPrintf("Lam-Alef FEFB : [" "\xEF\xBB\xBB" "]\n");
+	ConPrintf("Lam-Alef final FEFC : [" "\xEF\xBB\xBC" "]\n");
+	ConPrintf("Beh initial FE91 : [" "\xEF\xBA\x91" "]\n");
+	ConPrintf("Meem final FEE2 : [" "\xEF\xBB\xA2" "]\n");
 }
