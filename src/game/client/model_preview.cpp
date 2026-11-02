@@ -38,6 +38,7 @@
 
 #include "model_preview.h"
 #include "vgui/client_viewport.h"
+#include "common/entity_types.h"
 
 extern engine_studio_api_t IEngineStudio;
 
