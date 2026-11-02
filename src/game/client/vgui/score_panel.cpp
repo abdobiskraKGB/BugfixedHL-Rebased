@@ -23,7 +23,9 @@
 #include "hud/text_message.h"
 #include "vgui/client_viewport.h"
 #include "vgui/score_panel.h"
+#include "model_preview.h"
 #include "vgui/avatar_image.h"
+#include "vgui/tga_image.h"
 
 #define STEAM_PROFILE_URL "http://steamcommunity.com/profiles/"
 
@@ -160,6 +162,9 @@ constexpr bool HasItemFont(long)
 	return false;
 }
 
+static ConVar hud_scoreboard_teammodel("hud_scoreboard_teammodel", "1", FCVAR_BHL_ARCHIVE,
+	"Show the 3D player model of the team (models/player/<team>/<team>.mdl, or the helmet model) instead of a picture in the scoreboard banner");
+
 // The colored box behind the list of a team: a banner with the picture of the team, its name, the
 // number of players and the score (big), and a frame around the banner and the list.
 // The box of the right team is mirrored, so the two scores are side by side in the middle.
@@ -202,6 +207,27 @@ public:
 	// texture id of the picture of the team, -1 = no picture
 	void SetImage(int textureId) { m_iImage = textureId; }
 
+	// 3D model of the team in the place of the picture. slot: 0 = left, 1 = right
+	void SetModel(const char *teamName, int slot)
+	{
+		m_iSlot = slot;
+		m_ModelName = teamName ? teamName : "";
+
+		const bool has = hud_scoreboard_teammodel.GetBool() &&
+			(modelpreview::HasPlayerModel(m_ModelName.c_str()) || modelpreview::HasPlayerModel("helmet"));
+
+		// No model and no picture of the team: the question mark of unknown Steam accounts stands in
+		const bool unknown = hud_scoreboard_teammodel.GetBool() && !has && m_iImage == -1;
+
+		if (has != m_bHasModel || unknown != m_bUnknownIcon)
+		{
+			m_bHasModel = has;
+			m_bUnknownIcon = unknown;
+			if (m_iBannerTall > 0)
+				SetBanner(m_iBannerTall); // the space of the picture appears or disappears
+		}
+	}
+
 	void SetTexts(const wchar_t *name, const wchar_t *count, const wchar_t *score)
 	{
 		m_pName->SetText(name);
@@ -221,7 +247,7 @@ public:
 		const int scoreWide = wide / 3;
 
 		// the picture is a square
-		m_iImageSize = (m_iImage != -1) ? (bannerTall - pad) : 0;
+		m_iImageSize = (m_iImage != -1 || m_bHasModel || m_bUnknownIcon) ? (bannerTall - pad) : 0;
 		const int imageSpace = m_iImageSize ? (m_iImageSize + pad) : 0;
 
 		const int nameWide = wide - scoreWide - 2 * pad - imageSpace;
@@ -252,8 +278,31 @@ public:
 		vgui2::surface()->DrawSetColor(m_Color.r(), m_Color.g(), m_Color.b(), 80);
 		vgui2::surface()->DrawFilledRect(0, 0, wide, m_iBannerTall);
 
+		// 3D model of the team: the engine draws it behind this panel, in the square of the picture
+		bool modelShown = false;
+		if (m_bHasModel && m_iImageSize > 0)
+		{
+			int sx = m_iImageX;
+			int sy = (m_iBannerTall - m_iImageSize) / 2;
+			LocalToScreen(sx, sy);
+			modelShown = modelpreview::ShowScoreboardModel(m_iSlot, m_ModelName.c_str(), sx, sy, m_iImageSize);
+		}
+
+		// no model could be shown and the team has no picture: the unknown avatar (question mark)
+		if (!modelShown && m_iImage == -1 && m_bUnknownIcon && m_iImageSize > 0)
+		{
+			static CTGAImage *s_pUnknownIcon = nullptr;
+			if (!s_pUnknownIcon)
+				s_pUnknownIcon = new CTGAImage(VGUI2_ROOT_DIR "gfx/default_avatar");
+
+			s_pUnknownIcon->SetSize(m_iImageSize, m_iImageSize);
+			s_pUnknownIcon->SetPos(m_iImageX, (m_iBannerTall - m_iImageSize) / 2);
+			s_pUnknownIcon->SetColor(Color(255, 255, 255, 255));
+			s_pUnknownIcon->Paint();
+		}
+
 		// picture of the team
-		if (m_iImage != -1 && m_iImageSize > 0)
+		if (!modelShown && m_iImage != -1 && m_iImageSize > 0)
 		{
 			const int y = (m_iBannerTall - m_iImageSize) / 2;
 			vgui2::surface()->DrawSetColor(255, 255, 255, 255);
@@ -291,6 +340,10 @@ private:
 	vgui2::Label *m_pScore = nullptr;
 	Color m_Color = Color(255, 255, 255, 255);
 	bool m_bMirrored = false;
+	bool m_bHasModel = false;
+	bool m_bUnknownIcon = false;
+	int m_iSlot = 0;
+	std::string m_ModelName;
 	int m_iImage = -1;
 	int m_iImageX = 0;
 	int m_iImageSize = 0;
@@ -1694,6 +1747,8 @@ void CScorePanel::UpdateTeamBanner(int nTeamID, const wchar_t *name, int teamPla
 
 	box->SetTeamColor(g_pViewport->GetTeamColor(nTeamID));
 	box->SetImage(GetTeamImage(nTeamID));
+	CTeamInfo *teamInfo = GetTeamInfo(nTeamID);
+	box->SetModel(teamInfo ? teamInfo->GetName() : "", nTeamID == m_iLeftTeam ? 0 : 1);
 	box->SetTexts(name, count, scoreText);
 }
 

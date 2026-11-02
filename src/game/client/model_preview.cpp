@@ -3,16 +3,21 @@
 //
 // How it works:
 //  - Console commands (modelmenu, modelmenu_next, modelmenu_prev, modelmenu_apply) change the state here.
-//  - Every frame V_CalcRefdef calls modelpreview::Apply(). While the preview is open, the viewmodel
-//    entity is switched to the selected player model and placed in front of the camera, so the engine
-//    draws it on top of the scene (same pipeline as the weapon viewmodel: no wall clipping).
-//  - When the preview is closed, the original viewmodel state is restored.
+//  - Every frame V_CalcRefdef calls modelpreview::Apply(). While the preview is open, an entity owned by
+//    this file (not the weapon viewmodel) is given the selected player model, placed in front of the
+//    camera and handed to the engine with CL_CreateVisibleEntity. It does not depend on the weapon, so
+//    it also works while dead or spectating, and weapon animations cannot disturb it.
+//  - GameStudioModelRenderer draws these entities with a reduced depth range (like the viewmodel), so
+//    walls never hide them.
+//  - The scoreboard asks for small team models through ShowScoreboardModel().
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <FileSystem.h>
@@ -50,18 +55,6 @@ static ConVar modelmenu_spin("modelmenu_spin", "45", FCVAR_BHL_ARCHIVE, "Preview
 
 namespace
 {
-struct SavedViewmodel
-{
-	bool valid = false;
-	model_t *model = nullptr;
-	int modelindex = 0;
-	int sequence = 0;
-	int body = 0;
-	float frame = 0;
-	float framerate = 0;
-	float animtime = 0;
-};
-
 bool s_bOpen = false;
 bool s_bAnimDirty = true;
 bool s_bMenuShown = false;
@@ -70,7 +63,6 @@ int s_Index = 0;
 int s_iSequence = 0;
 model_t *s_pModel = nullptr;
 std::vector<std::string> s_Models;
-SavedViewmodel s_Saved;
 
 void ModelPath(const char *name, char *out, size_t size)
 {
@@ -194,6 +186,81 @@ void LoadPreviewModel()
 	s_bAnimDirty = true;
 }
 
+// Entities handed to the engine every frame (static: the engine keeps the pointers until it rendered)
+cl_entity_t s_MenuEnt;
+cl_entity_t s_TeamEnt[2];
+
+struct TeamRequest
+{
+	std::string name;
+	model_t *model = nullptr;
+	int sequence = 0;
+	float animStart = 0;
+	float lastRequest = -100;
+	int x = 0, y = 0, size = 0;
+};
+
+TeamRequest s_Team[2];
+
+bool IsSafeModelName(const char *name)
+{
+	if (!name || !name[0] || strlen(name) > 31)
+		return false;
+
+	for (const char *c = name; *c; ++c)
+	{
+		const char ch = *c;
+		if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-'))
+			return false;
+	}
+
+	return true;
+}
+
+model_t *LoadPlayerModel(const char *name, int &sequence)
+{
+	if (!IsSafeModelName(name))
+		return nullptr;
+
+	char path[256];
+	ModelPath(name, path, sizeof(path));
+
+	if (!g_pFullFileSystem->FileExists(path))
+		return nullptr;
+
+	model_t *model = IEngineStudio.Mod_ForName(path, 0);
+	sequence = FindIdleSequence(model);
+	return model;
+}
+
+// Fills a fresh entity: neutral pose (controllers/blends in the middle of their range) and an animation
+// clock that only we control.
+void FillEntity(cl_entity_t &e, model_t *model, const float *origin, float yaw, int sequence, float animStart)
+{
+	memset(&e, 0, sizeof(e));
+
+	e.model = model;
+	e.curstate.sequence = sequence;
+	e.curstate.framerate = 1;
+	e.curstate.animtime = animStart;
+	e.curstate.frame = 0;
+	e.curstate.scale = 1;
+	e.curstate.rendermode = kRenderNormal;
+	e.curstate.renderamt = 255;
+	e.latched.prevsequence = sequence;
+
+	for (int i = 0; i < 3; i++)
+	{
+		e.origin[i] = e.curstate.origin[i] = e.latched.prevorigin[i] = origin[i];
+		e.angles[i] = e.curstate.angles[i] = e.latched.prevangles[i] = (i == 1) ? yaw : 0.0f;
+	}
+
+	for (int i = 0; i < 4; i++)
+		e.curstate.controller[i] = e.latched.prevcontroller[i] = 127;
+	for (int i = 0; i < 2; i++)
+		e.curstate.blending[i] = e.latched.prevblending[i] = 127;
+}
+
 void ShowCurrent()
 {
 	if (s_Models.empty())
@@ -202,32 +269,6 @@ void ShowCurrent()
 	char buf[128];
 	snprintf(buf, sizeof(buf), "%s  [%d/%d]", s_Models[s_Index].c_str(), s_Index + 1, (int)s_Models.size());
 	gEngfuncs.pfnCenterPrint(buf);
-}
-
-void SaveViewmodel(cl_entity_t *view)
-{
-	s_Saved.valid = true;
-	s_Saved.model = view->model;
-	s_Saved.modelindex = view->curstate.modelindex;
-	s_Saved.sequence = view->curstate.sequence;
-	s_Saved.body = view->curstate.body;
-	s_Saved.frame = view->curstate.frame;
-	s_Saved.framerate = view->curstate.framerate;
-	s_Saved.animtime = view->curstate.animtime;
-}
-
-void RestoreViewmodel(cl_entity_t *view)
-{
-	view->model = s_Saved.model;
-	view->curstate.modelindex = s_Saved.modelindex;
-	view->curstate.sequence = s_Saved.sequence;
-	view->curstate.body = s_Saved.body;
-	view->curstate.frame = s_Saved.frame;
-	view->curstate.framerate = s_Saved.framerate;
-	view->curstate.animtime = s_Saved.animtime;
-	view->latched.sequencetime = 0;
-	view->latched.prevsequence = s_Saved.sequence;
-	s_Saved.valid = false;
 }
 
 void PreviewIndex(int index)
@@ -505,111 +546,143 @@ bool modelpreview::IsOpen()
 	return s_bOpen;
 }
 
+bool modelpreview::HasPlayerModel(const char *name)
+{
+	if (!IsSafeModelName(name))
+		return false;
+
+	// The scoreboard asks often; look at the disk at most every 3 seconds per name
+	static std::map<std::string, std::pair<float, bool>> s_Cache;
+	const float now = gEngfuncs.GetClientTime();
+	auto it = s_Cache.find(name);
+	if (it != s_Cache.end() && now - it->second.first < 3.0f && now >= it->second.first)
+		return it->second.second;
+
+	char path[256];
+	ModelPath(name, path, sizeof(path));
+	const bool exists = g_pFullFileSystem->FileExists(path);
+	s_Cache[name] = std::make_pair(now, exists);
+	return exists;
+}
+
+bool modelpreview::ShowScoreboardModel(int slot, const char *name, int x, int y, int size)
+{
+	if (slot < 0 || slot > 1 || size <= 0)
+		return false;
+
+	TeamRequest &t = s_Team[slot];
+
+	if (t.name != (name ? name : ""))
+	{
+		t.name = name ? name : "";
+		t.sequence = 0;
+		t.model = LoadPlayerModel(t.name.c_str(), t.sequence);
+
+		// No model with the name of the team on this computer: a helmet stands in for it
+		if (!t.model)
+			t.model = LoadPlayerModel("helmet", t.sequence);
+
+		t.animStart = gEngfuncs.GetClientTime();
+	}
+
+	if (!t.model)
+		return false;
+
+	t.x = x;
+	t.y = y;
+	t.size = size;
+	t.lastRequest = gEngfuncs.GetClientTime();
+	return true;
+}
+
+bool modelpreview::IsPreviewEntity(const cl_entity_t *ent)
+{
+	return ent && (ent == &s_MenuEnt || ent == &s_TeamEnt[0] || ent == &s_TeamEnt[1]);
+}
+
 void modelpreview::Apply(ref_params_s *pparams)
 {
-	cl_entity_t *view = gEngfuncs.GetViewModel();
-	if (!view)
-		return;
+	const float time = gEngfuncs.GetClientTime();
 
-	// The preview is not available in intermission or spectator modes.
-	if (s_bOpen && (pparams->intermission || pparams->spectator || g_iUser1))
+	// The list/preview is not shown in the intermission camera
+	if (s_bOpen && pparams->intermission)
 		s_bOpen = false;
 
 	// The list can be closed with its own close button
 	if (s_bOpen && s_hMenu.Get() && !s_hMenu->IsVisible() && modelmenu_panel.GetBool() && s_bMenuShown)
 		s_bOpen = false;
 
+	Vector forward, right, up;
+	AngleVectors(pparams->viewangles, forward, right, up);
+
 	if (!s_bOpen)
 	{
 		s_bMenuShown = false;
 		HideMenu();
-		if (s_Saved.valid)
-			RestoreViewmodel(view);
-		return;
 	}
-
-	if (!s_Saved.valid)
-		SaveViewmodel(view);
-
-	if (!s_pModel)
-		LoadPreviewModel();
-
-	if (!s_pModel)
+	else
 	{
-		s_bOpen = false;
-		RestoreViewmodel(view);
-		return;
+		if (!s_pModel)
+			LoadPreviewModel();
+
+		if (!s_pModel)
+		{
+			s_bOpen = false;
+		}
+		else
+		{
+			if (s_hMenu.Get() && s_hMenu->IsVisible())
+				s_bMenuShown = true;
+
+			if (s_bAnimDirty)
+			{
+				s_flAnimStart = time;
+				s_bAnimDirty = false;
+			}
+
+			const float dist = modelmenu_dist.GetFloat();
+			const float side = modelmenu_right.GetFloat();
+			const float height = modelmenu_up.GetFloat();
+			const float yaw = pparams->viewangles[1] + 180.0f + fmodf(time * modelmenu_spin.GetFloat(), 360.0f);
+
+			float origin[3];
+			for (int i = 0; i < 3; i++)
+				origin[i] = pparams->vieworg[i] + forward[i] * dist + right[i] * side + up[i] * height;
+
+			FillEntity(s_MenuEnt, s_pModel, origin, yaw, s_iSequence, s_flAnimStart);
+			gEngfuncs.CL_CreateVisibleEntity(ET_NORMAL, &s_MenuEnt);
+		}
 	}
 
-	// Camera basis
-	Vector forward, right, up;
-	AngleVectors(pparams->viewangles, forward, right, up);
+	// Team models requested by the scoreboard (screen rectangle -> a place in front of the camera)
+	const float fov = (gHUD.m_iFOV > 0) ? (float)gHUD.m_iFOV : 90.0f;
+	const float tanHalf = tanf(fov * 0.5f * 3.14159265f / 180.0f);
+	const float screenW = (float)ScreenWidth;
+	const float screenH = (float)ScreenHeight;
+	const float modelHeight = 72.0f;
 
-	float dist = modelmenu_dist.GetFloat();
-	float side = modelmenu_right.GetFloat();
-	float height = modelmenu_up.GetFloat();
-
-	float time = gEngfuncs.GetClientTime();
-	float yaw = pparams->viewangles[1] + 180.0f + fmodf(time * modelmenu_spin.GetFloat(), 360.0f);
-
-	for (int i = 0; i < 3; i++)
+	for (int slot = 0; slot < 2; slot++)
 	{
-		float o = pparams->vieworg[i] + forward[i] * dist + right[i] * side + up[i] * height;
-		view->origin[i] = o;
-		view->curstate.origin[i] = o;
-		view->latched.prevorigin[i] = o;
+		TeamRequest &t = s_Team[slot];
+		if (!t.model || time - t.lastRequest > 0.25f || t.size <= 0 || screenW <= 0 || tanHalf <= 0)
+			continue;
+
+		// distance at which a player model is exactly as tall as the requested square
+		float dist = modelHeight * (screenW * 0.5f) / ((float)t.size * tanHalf);
+		dist = std::min(std::max(dist, 30.0f), 3000.0f);
+		const float unitsPerPixel = tanHalf * dist / (screenW * 0.5f);
+
+		const float dx = (t.x + t.size * 0.5f) - screenW * 0.5f;
+		const float dy = (t.y + t.size * 0.5f) - screenH * 0.5f;
+
+		float origin[3];
+		for (int i = 0; i < 3; i++)
+		{
+			origin[i] = pparams->vieworg[i] + forward[i] * dist + right[i] * (dx * unitsPerPixel)
+			    - up[i] * (dy * unitsPerPixel) - up[i] * (modelHeight * 0.5f);
+		}
+
+		FillEntity(s_TeamEnt[slot], t.model, origin, pparams->viewangles[1] + 180.0f, t.sequence, t.animStart);
+		gEngfuncs.CL_CreateVisibleEntity(ET_NORMAL, &s_TeamEnt[slot]);
 	}
-
-	view->angles[0] = 0;
-	view->angles[1] = yaw;
-	view->angles[2] = 0;
-	view->curstate.angles[0] = 0;
-	view->curstate.angles[1] = yaw;
-	view->curstate.angles[2] = 0;
-	view->latched.prevangles[0] = 0;
-	view->latched.prevangles[1] = yaw;
-	view->latched.prevangles[2] = 0;
-
-	if (s_hMenu.Get() && s_hMenu->IsVisible())
-		s_bMenuShown = true;
-
-	// Model and animation
-	view->model = s_pModel;
-	view->curstate.sequence = s_iSequence;
-	view->curstate.body = 0;
-	view->curstate.skin = 0;
-	view->curstate.rendermode = kRenderNormal;
-	view->curstate.renderfx = kRenderFxNone;
-	view->curstate.renderamt = 255;
-	view->curstate.gaitsequence = 0;
-
-	// Neutral pose. Bone controllers (torso twist etc.) and blend values of the viewmodel entity are
-	// left at whatever the weapon code wrote (usually 0 = the END of the range), which twists the upper
-	// body against the legs. 127 is the middle of the range, i.e. "looking straight ahead".
-	for (int i = 0; i < 4; i++)
-	{
-		view->curstate.controller[i] = 127;
-		view->latched.prevcontroller[i] = 127;
-	}
-	for (int i = 0; i < 2; i++)
-	{
-		view->curstate.blending[i] = 127;
-		view->latched.prevblending[i] = 127;
-	}
-
-	if (s_bAnimDirty)
-	{
-		s_flAnimStart = time;
-		s_bAnimDirty = false;
-	}
-
-	// Rewrite the whole animation state EVERY frame. Weapon code (draw, idle, jump...) keeps writing
-	// into this entity through pfnWeaponAnim, which made the preview model nod, duck or jerk.
-	view->curstate.frame = 0;
-	view->curstate.framerate = 1;
-	view->curstate.animtime = s_flAnimStart;
-	view->latched.sequencetime = 0;
-	view->latched.prevsequence = s_iSequence;
-	view->latched.prevframe = 0;
-
 }

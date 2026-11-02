@@ -29,6 +29,8 @@
 #include "Exports.h"
 
 #include "hud/spectator.h"
+#include "model_preview.h"
+#include "opengl.h"
 
 //
 // Override the StudioModelRender virtual member functions here to implement custom bone
@@ -641,6 +643,16 @@ R_StudioDrawModel
 */
 int R_StudioDrawModel(int flags)
 {
+	// Models of the model preview / scoreboard: drawn like the viewmodel (reduced depth range, so walls
+	// never hide them) and without animation events (no footsteps or sounds)
+	if (modelpreview::IsPreviewEntity(IEngineStudio.GetCurrentEntity()) && IEngineStudio.IsHardware() && CClientOpenGL::Get().IsAvailable())
+	{
+		glDepthRange(0.0, 0.3);
+		const int result = g_StudioRenderer.StudioDrawModel(flags & ~STUDIO_EVENTS);
+		glDepthRange(0.0, 1.0);
+		return result;
+	}
+
 	return g_StudioRenderer.StudioDrawModel(flags);
 }
 
