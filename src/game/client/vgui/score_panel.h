@@ -134,6 +134,7 @@ private:
 	vgui2::HFont m_hBannerScoreFont = 0;
 	bool m_bTwoShowSteam = true; // columns that fit in the two-team layout
 	bool m_bTwoShowEff = true;
+	bool m_bTwoShowModel = true;
 	int m_iTwoPanelWideReal = 0; // real sizes used by the two-team layout
 	int m_iTwoListWideReal = 0;
 	int m_iTwoNameWide = 0;
@@ -173,6 +174,7 @@ private:
 	CPanelAnimationVarAliasType(int, m_iColumnWidthAvatar, "column_avatar", "26", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iColumnWidthName, "column_name", "170", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iColumnWidthSteamID, "column_steamid", "88", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iColumnWidthModel, "column_model", "70", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iColumnWidthEff, "column_eff", "60", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iColumnWidthFrags, "column_frags", "60", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iColumnWidthDeaths, "column_deaths", "60", "proportional_int");
@@ -188,8 +190,9 @@ private:
 	// the SteamID column and then the Eff column are dropped.
 	CPanelAnimationVarAliasType(int, m_iTwoPanelWide, "two_wide", "760", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iTwoListGap, "two_list_gap", "6", "proportional_int");
-	CPanelAnimationVarAliasType(int, m_iTwoColAvatar, "two_column_avatar", "22", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoColAvatar, "two_column_avatar", "30", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iTwoColSteamID, "two_column_steamid", "78", "proportional_int");
+	CPanelAnimationVarAliasType(int, m_iTwoColModel, "two_column_model", "64", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iTwoColEff, "two_column_eff", "34", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iTwoColFrags, "two_column_frags", "36", "proportional_int");
 	CPanelAnimationVarAliasType(int, m_iTwoColDeaths, "two_column_deaths", "38", "proportional_int");

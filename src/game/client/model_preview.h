@@ -31,6 +31,14 @@ bool ShowScoreboardModel(int slot, const char *name, int x, int y, int size);
 
 //! True for the entities created by this module (the studio renderer draws them over the world).
 bool IsPreviewEntity(const struct cl_entity_s *ent);
+
+//! For a scoreboard team model: the screen square (pixels, origin at the top left) the renderer must clip
+//! it to, so only the upper part of the body shows inside the picture slot.
+//! @returns false for the other entities.
+bool GetScissor(const struct cl_entity_s *ent, int &x, int &y, int &w, int &h);
+
+//! Forgets everything that points into the previous map (call on every map change / connect).
+void Reset();
 }
 
 #endif

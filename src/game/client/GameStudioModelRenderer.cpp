@@ -647,9 +647,29 @@ int R_StudioDrawModel(int flags)
 	// never hide them) and without animation events (no footsteps or sounds)
 	if (modelpreview::IsPreviewEntity(IEngineStudio.GetCurrentEntity()) && IEngineStudio.IsHardware() && CClientOpenGL::Get().IsAvailable())
 	{
+		// A scoreboard team model is cut to its picture slot (only the upper part of the body shows)
+		int sx = 0, sy = 0, sw = 0, sh = 0;
+		const bool scissor = modelpreview::GetScissor(IEngineStudio.GetCurrentEntity(), sx, sy, sw, sh) && gHUD.m_scrinfo.iWidth > 0 && gHUD.m_scrinfo.iHeight > 0;
+
+		if (scissor)
+		{
+			// the slot is in screen pixels, GL wants window pixels with the origin at the bottom
+			GLint vp[4];
+			glGetIntegerv(GL_VIEWPORT, vp);
+			const double kx = (double)vp[2] / gHUD.m_scrinfo.iWidth;
+			const double ky = (double)vp[3] / gHUD.m_scrinfo.iHeight;
+
+			glEnable(GL_SCISSOR_TEST);
+			glScissor(vp[0] + (GLint)(sx * kx), vp[1] + (GLint)((gHUD.m_scrinfo.iHeight - (sy + sh)) * ky), (GLsizei)(sw * kx), (GLsizei)(sh * ky));
+		}
+
 		glDepthRange(0.0, 0.3);
 		const int result = g_StudioRenderer.StudioDrawModel(flags & ~STUDIO_EVENTS);
 		glDepthRange(0.0, 1.0);
+
+		if (scissor)
+			glDisable(GL_SCISSOR_TEST);
+
 		return result;
 	}
 

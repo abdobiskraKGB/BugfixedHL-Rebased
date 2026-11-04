@@ -292,6 +292,7 @@ int CL_DLLEXPORT HUD_VidInit(void)
 	gHUD.VidInit();
 	IN_OnNewSession();
 	LastServer_Update();
+	modelpreview::Reset();
 	g_StudioRenderer.InitOnConnect();
 	PM_ResetBHopDetection();
 	PM_ResetUseSlowDownDetection();

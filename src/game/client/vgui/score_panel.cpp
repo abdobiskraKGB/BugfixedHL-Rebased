@@ -37,6 +37,7 @@ ConVar hud_scoreboard_effpercent("hud_scoreboard_effpercent", "0", FCVAR_ARCHIVE
 ConVar hud_scoreboard_profile_browser("hud_scoreboard_profile_browser", "0", FCVAR_ARCHIVE, "Open player Steam profile in the web browser instead of the Steam overlay");
 ConVar hud_scoreboard_showsteamid("hud_scoreboard_showsteamid", "1", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_showeff("hud_scoreboard_showeff", "1", FCVAR_ARCHIVE);
+ConVar hud_scoreboard_showmodel("hud_scoreboard_showmodel", "1", FCVAR_ARCHIVE, "Show the player model next to the SteamID");
 ConVar hud_scoreboard_size("hud_scoreboard_size", "0", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_spacing_normal("hud_scoreboard_spacing_normal", "0", FCVAR_ARCHIVE);
 ConVar hud_scoreboard_spacing_compact("hud_scoreboard_spacing_compact", "0", FCVAR_ARCHIVE);
@@ -274,10 +275,6 @@ public:
 		int wide = 0, tall = 0;
 		GetSize(wide, tall);
 
-		// banner
-		vgui2::surface()->DrawSetColor(m_Color.r(), m_Color.g(), m_Color.b(), 80);
-		vgui2::surface()->DrawFilledRect(0, 0, wide, m_iBannerTall);
-
 		// 3D model of the team: the engine draws it behind this panel, in the square of the picture
 		bool modelShown = false;
 		if (m_bHasModel && m_iImageSize > 0)
@@ -286,6 +283,24 @@ public:
 			int sy = (m_iBannerTall - m_iImageSize) / 2;
 			LocalToScreen(sx, sy);
 			modelShown = modelpreview::ShowScoreboardModel(m_iSlot, m_ModelName.c_str(), sx, sy, m_iImageSize);
+		}
+
+		// banner; with a model there is a clear window in it, otherwise the model would be seen through
+		// the tinted banner and look dull
+		vgui2::surface()->DrawSetColor(m_Color.r(), m_Color.g(), m_Color.b(), 80);
+		if (modelShown)
+		{
+			const int y0 = (m_iBannerTall - m_iImageSize) / 2;
+			const int y1 = y0 + m_iImageSize;
+			const int x1 = m_iImageX + m_iImageSize;
+			vgui2::surface()->DrawFilledRect(0, 0, wide, y0);
+			vgui2::surface()->DrawFilledRect(0, y1, wide, m_iBannerTall);
+			vgui2::surface()->DrawFilledRect(0, y0, m_iImageX, y1);
+			vgui2::surface()->DrawFilledRect(x1, y0, wide, y1);
+		}
+		else
+		{
+			vgui2::surface()->DrawFilledRect(0, 0, wide, m_iBannerTall);
 		}
 
 		// no model could be shown and the team has no picture: the unknown avatar (question mark)
@@ -786,6 +801,14 @@ void CScorePanel::CreateSectionIn(vgui2::SectionedListPanel *list, int nTeamID)
 		    two ? m_iTwoColSteamID : m_iColumnWidthSteamID);
 	}
 
+	// Player model
+	if (two ? m_bTwoShowModel : hud_scoreboard_showmodel.GetBool())
+	{
+		list->AddColumnToSection(nTeamID, "model", titleRow ? "Model" : "",
+		    vgui2::SectionedListPanel::COLUMN_BRIGHT,
+		    two ? m_iTwoColModel : m_iColumnWidthModel);
+	}
+
 	// Efficiency
 	if (two ? m_bTwoShowEff : hud_scoreboard_showeff.GetBool())
 	{
@@ -930,6 +953,9 @@ void CScorePanel::UpdateClientInfo(int client)
 
 		// SteamID
 		fnSetString("steamid", pi->GetSteamID());
+
+		// Player model
+		fnSetString("model", pi->GetModel() ? pi->GetModel() : "");
 
 		// Efficiency
 		float eff = CalculateEfficiency(pi->GetFrags(), pi->GetDeaths());
@@ -1152,6 +1178,10 @@ int CScorePanel::GetNameColumnWidth()
 
 	if (!hud_scoreboard_showeff.GetBool())
 		w += m_iColumnWidthEff;
+
+	// the model column takes its width from the name column (the total must stay the same)
+	if (hud_scoreboard_showmodel.GetBool())
+		w -= m_iColumnWidthModel;
 
 	return w;
 }
@@ -1684,17 +1714,25 @@ void CScorePanel::GetTwoLayout()
 
 	m_bTwoShowSteam = hud_scoreboard_showsteamid.GetBool();
 	m_bTwoShowEff = hud_scoreboard_showeff.GetBool();
+	m_bTwoShowModel = hud_scoreboard_showmodel.GetBool();
 
-	// the name column takes the rest. When it is too small, the SteamID and then the Eff column are dropped.
+	// the name column takes the rest. When it is too small, the SteamID, then the model and then the Eff
+	// column are dropped.
 	const int fixed = m_iTwoColAvatar + m_iTwoColFrags + m_iTwoColDeaths + m_iTwoColPing;
 	int nameWide = listWide - fixed
 	    - (m_bTwoShowSteam ? m_iTwoColSteamID : 0)
+	    - (m_bTwoShowModel ? m_iTwoColModel : 0)
 	    - (m_bTwoShowEff ? m_iTwoColEff : 0);
 
 	if (nameWide < m_iTwoMinName && m_bTwoShowSteam)
 	{
 		m_bTwoShowSteam = false;
 		nameWide += m_iTwoColSteamID;
+	}
+	if (nameWide < m_iTwoMinName && m_bTwoShowModel)
+	{
+		m_bTwoShowModel = false;
+		nameWide += m_iTwoColModel;
 	}
 	if (nameWide < m_iTwoMinName && m_bTwoShowEff)
 	{

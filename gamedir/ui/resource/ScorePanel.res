@@ -21,11 +21,16 @@
 		"column_avatar"		"26"
 		"column_name"		"170"
 		"column_steamid"	"88"
+		"column_model"		"70"
 		"column_eff"		"60"
 		"column_frags"		"60"
 		"column_deaths"		"60"
 		"column_ping"		"80"
 		
+		// Two-team layout (hud_scoreboard_two). The picture of a player, its row grows with it
+		"two_column_avatar"	"30"
+		"two_column_model"	"64"
+
 		// Icon of muted players (without .tga)
 		"muted_icon"		"ui/gfx/muted_icon32"
 		
