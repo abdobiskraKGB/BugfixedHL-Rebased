@@ -217,6 +217,7 @@ set( SOURCE_FILES
 	kbutton.h
 	model_preview.cpp
 	last_server.cpp
+	center_print.cpp
 	model_preview.h
 	net.h
 	opengl.cpp

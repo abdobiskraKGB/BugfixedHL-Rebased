@@ -116,6 +116,7 @@ void CSvcMessages::Init()
 	memset(&m_Handlers.funcs, 0, sizeof(m_Handlers.funcs));
 
 	m_Handlers.funcs.pfnSvcPrint = CallMember<&CSvcMessages::SvcPrint>;
+	m_Handlers.funcs.pfnSvcCenterPrint = CallMember<&CSvcMessages::SvcCenterPrint>;
 	m_Handlers.funcs.pfnSvcTempEntity = CallMember<&CSvcMessages::SvcTempEntity>;
 	m_Handlers.funcs.pfnSvcNewUserMsg = CallMember<&CSvcMessages::SvcNewUserMsg>;
 	m_Handlers.funcs.pfnSvcStuffText = CallMember<&CSvcMessages::SvcStuffText>;
@@ -407,6 +408,16 @@ bool CSvcMessages::IsCvarGood(const char *str)
 		return false;
 
 	return true;
+}
+
+void CSvcMessages::SvcCenterPrint()
+{
+	BEGIN_READ(GetMsgBuf().GetBuf(), GetMsgBuf().GetSize(), GetMsgBuf().GetReadPos());
+	char *str = READ_STRING();
+
+	// Shown by our own panel (UTF-8 capable); the engine must not print it a second time
+	CenterPrint_Show(str);
+	GetMsgBuf().GetReadPos() += strlen(str) + 1;
 }
 
 void CSvcMessages::SvcPrint()

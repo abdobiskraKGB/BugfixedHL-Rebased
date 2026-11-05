@@ -21,6 +21,8 @@
 #include "client_steam_context.h"
 #include "hud/chat.h"
 #include "hud/text_message.h"
+#include "hud/timer.h"
+#include "hud/ag/ag_global.h"
 #include "vgui/client_viewport.h"
 #include "vgui/score_panel.h"
 #include "model_preview.h"
@@ -511,6 +513,14 @@ void CScorePanel::OnThink()
 	{
 		UpdateAllClients();
 	}
+
+	// the time left changes every second
+	const float now = gEngfuncs.GetAbsoluteTime();
+	if (m_flLastMapNameUpdate + 0.5f <= now)
+	{
+		m_flLastMapNameUpdate = now;
+		UpdateMapName();
+	}
 }
 
 void CScorePanel::OnCommand(const char *command)
@@ -574,6 +584,12 @@ void CScorePanel::ShowPanel(bool state)
 	{
 		FullUpdate();
 
+		// Lay everything out before the first paint; otherwise the board is drawn unfinished (two layers
+		// on top of each other) until the next periodic update
+		InvalidateLayout(true);
+		Resize();
+		InvalidateLayout(true);
+
 		// Make active unless chat is visible
 		// (possible if scoreboard is activated by intermission when chat is open)
 		if (CHudChat::Get()->GetMessageMode() == MM_NONE)
@@ -618,11 +634,33 @@ void CScorePanel::FullUpdate()
 
 void CScorePanel::UpdateMapName()
 {
-	char buf[64];
-	wchar_t wbuf[64];
+	char buf[128];
+	wchar_t wbuf[128];
 	V_FileBase(gEngfuncs.pfnGetLevelName(), buf, sizeof(buf));
+
+	// Map, time left and, on AG servers, the game mode: "stalkx   |   12:34   |   Arena"
+	const int timeLeft = CHudTimer::Get()->GetTimeLeft();
+	if (timeLeft > 0)
+	{
+		char t[48];
+		if (timeLeft >= 3600)
+			snprintf(t, sizeof(t), "   |   %d:%02d:%02d", timeLeft / 3600, (timeLeft / 60) % 60, timeLeft % 60);
+		else
+			snprintf(t, sizeof(t), "   |   %d:%02d", timeLeft / 60, timeLeft % 60);
+		V_strncat(buf, t, sizeof(buf));
+	}
+
+	static const char *const s_ModeNames[] = { "", "Arena", "LMS", "CTF", "Arcade", "SGBow", "Instagib" };
+	const int mode = AgGametype();
+	if (mode > 0 && mode < (int)(sizeof(s_ModeNames) / sizeof(s_ModeNames[0])))
+	{
+		V_strncat(buf, "   |   ", sizeof(buf));
+		V_strncat(buf, s_ModeNames[mode], sizeof(buf));
+	}
+
 	g_pVGuiLocalize->ConvertANSIToUnicode(buf, wbuf, sizeof(wbuf));
 	m_pMapNameLabel->SetText(wbuf);
+	m_pMapNameLabel->SizeToContents();
 }
 
 void CScorePanel::RefreshItems()
@@ -1716,7 +1754,7 @@ void CScorePanel::GetTwoLayout()
 	m_bTwoShowEff = hud_scoreboard_showeff.GetBool();
 	m_bTwoShowModel = hud_scoreboard_showmodel.GetBool();
 
-	// the name column takes the rest. When it is too small, the SteamID, then the model and then the Eff
+	// the name column takes the rest. When it is too small, the model, then the SteamID and then the Eff
 	// column are dropped.
 	const int fixed = m_iTwoColAvatar + m_iTwoColFrags + m_iTwoColDeaths + m_iTwoColPing;
 	int nameWide = listWide - fixed
@@ -1724,15 +1762,16 @@ void CScorePanel::GetTwoLayout()
 	    - (m_bTwoShowModel ? m_iTwoColModel : 0)
 	    - (m_bTwoShowEff ? m_iTwoColEff : 0);
 
-	if (nameWide < m_iTwoMinName && m_bTwoShowSteam)
-	{
-		m_bTwoShowSteam = false;
-		nameWide += m_iTwoColSteamID;
-	}
+	// the SteamID is more useful than the model name: the model goes first
 	if (nameWide < m_iTwoMinName && m_bTwoShowModel)
 	{
 		m_bTwoShowModel = false;
 		nameWide += m_iTwoColModel;
+	}
+	if (nameWide < m_iTwoMinName && m_bTwoShowSteam)
+	{
+		m_bTwoShowSteam = false;
+		nameWide += m_iTwoColSteamID;
 	}
 	if (nameWide < m_iTwoMinName && m_bTwoShowEff)
 	{

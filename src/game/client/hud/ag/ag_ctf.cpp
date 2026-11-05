@@ -38,8 +38,8 @@ void AgHudCTF::Init()
 	HookMessage<&AgHudCTF::MsgFunc_CTFFlag>("CTFFlag");
 
 	m_iFlags = 0;
-	m_iFlagStatus1 = 0;
-	m_iFlagStatus2 = 0;
+	m_iFlagStatus1 = Off;
+	m_iFlagStatus2 = Off;
 
 	g_iPlayerFlag1 = 0;
 	g_iPlayerFlag2 = 0;
@@ -67,8 +67,11 @@ void AgHudCTF::VidInit()
 	m_IconFlagStatus[Carry].spr = gHUD.GetSprite(iSprite);
 	m_IconFlagStatus[Carry].rc = gHUD.GetSpriteRect(iSprite);
 
-	m_iFlagStatus1 = 0;
-	m_iFlagStatus2 = 0;
+	// "Home" (0) is a valid status: after connecting to a server that is not playing CTF the icons would
+	// stay on the screen forever. Start with the flags off; the server's CTF message turns them on.
+	m_iFlagStatus1 = Off;
+	m_iFlagStatus2 = Off;
+	m_iFlags &= ~HUD_ACTIVE;
 
 	g_iPlayerFlag1 = 0;
 	g_iPlayerFlag2 = 0;
@@ -82,7 +85,8 @@ void AgHudCTF::Reset(void)
 
 void AgHudCTF::Draw(float fTime)
 {
-	if (m_iFlagStatus1 < Home || m_iFlagStatus1 > Carry || m_iFlagStatus2 < Home || m_iFlagStatus2 > Carry || gHUD.m_iIntermission)
+	if (m_iFlagStatus1 < Home || m_iFlagStatus1 > Carry || m_iFlagStatus2 < Home || m_iFlagStatus2 > Carry
+	    || gHUD.m_iIntermission || AgGametype() != GT_CTF)
 	{
 		Reset();
 		return;

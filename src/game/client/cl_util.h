@@ -121,9 +121,13 @@ inline int TextMessageDrawStringReverse(int x, int y, const char *string, int r,
 
 void ConsolePrint(const char *string);
 
+// center_print.cpp: print_center drawn with the chat font (UTF-8, Arabic), cleared on map/server change
+void CenterPrint_Show(const char *string);
+void CenterPrint_Clear();
+
 inline void CenterPrint(const char *string)
 {
-	gEngfuncs.pfnCenterPrint(string);
+	CenterPrint_Show(string);
 }
 
 // sound functions

@@ -191,6 +191,13 @@ private:
 	void SvcPrint();
 
 	/**
+	 * svc_centerprint: Prints text in the middle of the screen.
+	 * Message contents:
+	 *   string: Text to print.
+	 */
+	void SvcCenterPrint();
+
+	/**
 	 * svc_temp_entity: Create a tempentity on the client.
 	 * Message contents:
 	 *   byte: Type

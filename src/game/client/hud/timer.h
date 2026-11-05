@@ -26,6 +26,9 @@ public:
 	};
 
 	int GetAgVersion();
+
+	/** Seconds left until the end of the map (the same value as the HUD timer), -1 when unknown. */
+	int GetTimeLeft();
 	float GetHudNextmap();
 	const char *GetNextmap();
 	void SetNextmap(const char *nextmap);

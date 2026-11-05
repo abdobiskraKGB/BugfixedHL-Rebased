@@ -54,7 +54,8 @@ static ConVar modelmenu_panel("modelmenu_panel", "1", FCVAR_BHL_ARCHIVE, "Show t
 static ConVar modelmenu_close_on_apply("modelmenu_close_on_apply", "0", FCVAR_BHL_ARCHIVE, "Close the menu after a model was chosen with the mouse");
 static ConVar modelmenu_skills("modelmenu_skills", "1", FCVAR_BHL_ARCHIVE, "After turning to face you the model shows walk/run/jump/attack, one every 3 seconds (0 = only idle)");
 static ConVar modelmenu_turn("modelmenu_turn", "1.4", FCVAR_BHL_ARCHIVE, "Seconds the model needs for its turn when another model is selected (0 = no turn)");
-static ConVar hud_scoreboard_teammodel_crop("hud_scoreboard_teammodel_crop", "40", FCVAR_BHL_ARCHIVE, "Height in game units of the model shown in the scoreboard (72 = the whole body, 36 = the upper half)");
+static ConVar hud_scoreboard_teammodel_crop("hud_scoreboard_teammodel_crop", "46", FCVAR_BHL_ARCHIVE, "Height in game units of the model shown in the scoreboard, counted from the top of the head (72 = the whole body, 46 = head and chest)");
+static ConVar hud_scoreboard_teammodel_shift("hud_scoreboard_teammodel_shift", "0", FCVAR_BHL_ARCHIVE, "Moves the model up (+) or down (-) inside its square, in game units");
 
 namespace
 {
@@ -876,7 +877,15 @@ void modelpreview::Apply(ref_params_s *pparams)
 
 		const float dx = (t.x + t.size * 0.5f) - screenW * 0.5f;
 		const float dy = (t.y + t.size * 0.5f) - screenH * 0.5f;
-		const float centerHeight = modelHeight - visible * 0.5f; // height of the model at the center of the square
+
+		// Top of the head: the eye height of the model plus a margin (models are not all 72 units tall)
+		float top = modelHeight;
+		if (studiohdr_t *hdr = (studiohdr_t *)IEngineStudio.Mod_Extradata(t.model))
+		{
+			if (hdr->eyeposition[2] > 20.0f && hdr->eyeposition[2] < 120.0f)
+				top = hdr->eyeposition[2] + 10.0f;
+		}
+		const float centerHeight = top - visible * 0.5f - hud_scoreboard_teammodel_shift.GetFloat();
 
 		float origin[3], angles[3];
 		for (int i = 0; i < 3; i++)
@@ -885,7 +894,11 @@ void modelpreview::Apply(ref_params_s *pparams)
 			    - up[i] * (dy * unitsPerPixel) - up[i] * centerHeight;
 		}
 
-		FacingCameraAngles(pparams->viewangles, 0.0f, angles);
+		// The model is not on the line of sight, so "parallel to the screen" looks as if it was staring to a
+		// side: turn it towards the camera by the angle under which the camera sees it
+		const float lateral = dx * unitsPerPixel;
+		const float turn = -atan2f(lateral, dist) * 180.0f / 3.14159265f;
+		FacingCameraAngles(pparams->viewangles, turn, angles);
 
 		FillEntity(s_TeamEnt[slot], t.model, origin, angles, t.sequence, t.animStart);
 		gEngfuncs.CL_CreateVisibleEntity(ET_NORMAL, &s_TeamEnt[slot]);

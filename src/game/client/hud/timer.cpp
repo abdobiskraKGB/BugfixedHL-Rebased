@@ -549,6 +549,21 @@ void CHudTimer::SetNextmap(const char *nextmap)
 	m_szNextmap[ARRAYSIZE(m_szNextmap) - 1] = 0;
 }
 
+int CHudTimer::GetTimeLeft()
+{
+	float currentTime;
+	if (gEngfuncs.pDemoAPI->IsPlayingback())
+		currentTime = m_bDemoSyncTimeValid ? m_flDemoSyncTime + gHUD.m_flTime : 0;
+	else
+		currentTime = gHUD.m_flTime;
+
+	if (m_flEndTime <= 0 || currentTime <= 0)
+		return -1;
+
+	const int timeleft = m_flSynced ? (int)(m_flEndTime - currentTime) + 1 : (int)(m_flEndTime - m_flEffectiveTime);
+	return timeleft > 0 ? timeleft : -1;
+}
+
 void CHudTimer::Draw(float fTime)
 {
 	char text[128];

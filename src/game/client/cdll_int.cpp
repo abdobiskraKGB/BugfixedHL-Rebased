@@ -45,7 +45,6 @@
 #include "engfuncs.h"
 #include "engine_builds.h"
 #include "gameui/console_arabic_preview.h"
-#include "model_preview.h"
 
 CHud gHUD;
 
@@ -53,6 +52,7 @@ void InitInput(void);
 void ShutdownInput();
 void IN_OnNewSession();
 void LastServer_Update();
+void LastServer_Load();
 
 #ifdef _WIN32
 void CrashHandler_InstallShutdownHook();
@@ -293,6 +293,7 @@ int CL_DLLEXPORT HUD_VidInit(void)
 	gHUD.VidInit();
 	IN_OnNewSession();
 	LastServer_Update();
+	CenterPrint_Clear();
 	modelpreview::Reset();
 	g_StudioRenderer.InitOnConnect();
 	PM_ResetBHopDetection();
@@ -319,6 +320,7 @@ void CL_DLLEXPORT HUD_Init(void)
 	console::HudInit();
 	CEnginePatches::Get().Init();
 	InitInput();
+	LastServer_Load();
 	CrashHandler_InstallShutdownHook();
 	ClientSteamContext().Activate();
 	CClientOpenGL::Get().Init();

@@ -164,6 +164,7 @@ private:
 	int m_iKillerIndex = 0;
 	float m_flKillerHighlightStart = 0;
 	float m_flLastUpdateTime = 0;
+	float m_flLastMapNameUpdate = 0;
 
 	Color m_ThisPlayerBgColor = Color(0, 0, 0, 0);
 	Color m_KillerBgColor = Color(0, 0, 0, 0);
