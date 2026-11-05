@@ -639,7 +639,9 @@ void CScorePanel::UpdateMapName()
 	V_FileBase(gEngfuncs.pfnGetLevelName(), buf, sizeof(buf));
 
 	// Map, time left and, on AG servers, the game mode: "stalkx   |   12:34   |   Arena"
-	const int timeLeft = CHudTimer::Get()->GetTimeLeft();
+	// the HUD timer may not exist yet when the scoreboard is built
+	CHudTimer *timer = CHudTimer::Get();
+	const int timeLeft = timer ? timer->GetTimeLeft() : -1;
 	if (timeLeft > 0)
 	{
 		char t[48];

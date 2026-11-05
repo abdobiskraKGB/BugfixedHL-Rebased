@@ -45,7 +45,6 @@
 #include "engfuncs.h"
 #include "engine_builds.h"
 #include "gameui/console_arabic_preview.h"
-#include "model_preview.h"
 
 CHud gHUD;
 
